@@ -23,13 +23,51 @@ $stateDir  = Join-Path $env:APPDATA 'HorizonHealthCheck'
 $stateFile = Join-Path $stateDir 'state.json'
 if (-not (Test-Path $stateDir)) { New-Item -Path $stateDir -ItemType Directory -Force | Out-Null }
 
+# ---- Crash trap -----------------------------------------------------------
+# Anything that bubbles up uncaught past this point gets written to
+# last-error.log next to the script AND echoed to the console BEFORE the
+# process exits. Without this, RunGUI.cmd flashes closed on any startup
+# failure and the operator has no way to know what blew up.
+$Script:CrashLogPath = Join-Path $root 'last-error.log'
+trap {
+    $err = $_
+    $msg = @"
+=== HealthCheck startup crash $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===
+Message: $($err.Exception.Message)
+Type   : $($err.Exception.GetType().FullName)
+Script : $($err.InvocationInfo.ScriptName)
+Line # : $($err.InvocationInfo.ScriptLineNumber)
+Line   : $($err.InvocationInfo.Line.Trim())
+At col : $($err.InvocationInfo.OffsetInLine)
+
+--- StackTrace ---
+$($err.ScriptStackTrace)
+
+--- Inner ---
+$($err.Exception.InnerException)
+
+--- Full record ---
+$($err | Out-String)
+"@
+    try { Set-Content -Path $Script:CrashLogPath -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue } catch { }
+    Write-Host $msg -ForegroundColor Red
+    try {
+        [System.Windows.Forms.MessageBox]::Show(
+            "HealthCheck failed to start.`n`n$($err.Exception.Message)`n`nFull details written to:`n$Script:CrashLogPath",
+            'Horizon HealthCheck - Startup Error',
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } catch { }
+    exit 1
+}
+
 # ---- Version tracking + auto-update ---------------------------------------
 # Read local VERSION; if missing fall back to a hard-coded constant. Always
 # expose $Script:HealthCheckVersion so the runspace + report header can
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.29'
+$Script:HealthCheckVersion = '0.93.30'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
