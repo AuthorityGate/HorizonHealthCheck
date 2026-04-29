@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.59'
+$Script:HealthCheckVersion = '0.93.60'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -273,7 +273,7 @@ function Show-StarterDialog {
 
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text          = 'Horizon HealthCheck - Welcome'
-    $dlg.Size          = New-Object System.Drawing.Size(720, 820)
+    $dlg.Size          = New-Object System.Drawing.Size(720, 860)
     $dlg.StartPosition = 'CenterScreen'
     $dlg.Font          = New-Object System.Drawing.Font('Segoe UI', 9)
     # Sizable + AutoScroll: jumpbox / RDP / 1366x768 users can drag-resize
@@ -289,7 +289,7 @@ function Show-StarterDialog {
     # Min content height = button row bottom (y=738) + padding. Default form
     # height (820 - ~30 title = 790 client) is 40 px taller, so no scrollbar
     # appears by default; only shows if the user shrinks the dialog.
-    $dlg.AutoScrollMinSize = New-Object System.Drawing.Size(700, 750)
+    $dlg.AutoScrollMinSize = New-Object System.Drawing.Size(700, 800)
     $dlg.ShowInTaskbar = $true
     # Cap initial size to 95% of working area so the dialog never spawns
     # taller than the screen on a 1366x768 jumpbox.
@@ -298,7 +298,7 @@ function Show-StarterDialog {
         $maxW = [int]($workArea.Width  * 0.95)
         $maxH = [int]($workArea.Height * 0.95)
         if ($dlg.Size.Height -gt $maxH -or $dlg.Size.Width -gt $maxW) {
-            $dlg.Size = New-Object System.Drawing.Size(([Math]::Min(720,$maxW)), ([Math]::Min(820,$maxH)))
+            $dlg.Size = New-Object System.Drawing.Size(([Math]::Min(720,$maxW)), ([Math]::Min(860,$maxH)))
         }
     } catch { }
 
@@ -459,13 +459,13 @@ By clicking 'Continue' below, you confirm:
     $grpTgt = New-Object System.Windows.Forms.GroupBox
     $grpTgt.Text = ' What do you want to check? '
     $grpTgt.Location = New-Object System.Drawing.Point(20, 408)
-    # Group height accommodates 9 checkboxes (Horizon, vCenter, Nutanix,
-    # AppVol, UAG, NSX, DEM, vIDM, UEM) at 24 px stride starting at y=46.
-    # Last checkbox (UEM) tops at y=238 + 22 = 260 + 16 padding = 276 floor.
+    # Group height accommodates 10 checkboxes (Horizon, vCenter, Nutanix,
+    # AppVol, UAG, NSX, DEM, vIDM, UEM, AD) at 24 px stride starting at y=46.
+    # Last checkbox (AD) tops at y=262, autoNote follows at y=290.
     # NOTE: GroupBox inherits from Control, not ScrollableControl, so it has
     # no AutoScroll property. The parent dialog already has AutoScroll=$true,
     # so when the window is shorter than the GroupBox the FORM scrolls.
-    $grpTgt.Size     = New-Object System.Drawing.Size(660, 280)
+    $grpTgt.Size     = New-Object System.Drawing.Size(660, 330)
     $grpTgt.Font     = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
     $dlg.Controls.Add($grpTgt)
 
@@ -541,13 +541,22 @@ By clicking 'Continue' below, you confirm:
     $cbUEM.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
     $grpTgt.Controls.Add($cbUEM)
 
+    # Active Directory: multi-forest probing - configured via the AD tab on
+    # the main form (per-row DC + Forest + credential profile).
+    $cbAD = New-Object System.Windows.Forms.CheckBox
+    $cbAD.Text = 'Active Directory (forests / domains / sites / DCs / replication / FSMO / GPO / KRBTGT / delegation)'
+    $cbAD.Location = New-Object System.Drawing.Point(20, 262)
+    $cbAD.Size     = New-Object System.Drawing.Size(620, 22)
+    $cbAD.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
+    $grpTgt.Controls.Add($cbAD)
+
     # Auto-discovery footnote: components that piggyback on the targets
     # checked above and do NOT need their own input field. Spelling these
     # out here saves the operator from looking for a non-existent tab.
     $autoNote = New-Object System.Windows.Forms.Label
     $autoNote.Text = 'Auto-discovered when Horizon is checked: Connection Servers (replicas), Cloud Pod Federation (CPA), Enrollment Servers (True SSO), Pods, Sites, vCenter registrations, RADIUS/SAML/Smart-Card authenticators, Helpdesk, Network Ranges, Access Groups, Persistent Disks, App Pools, Farms, Pools, Sessions. Auto-discovered when vCenter is checked: every cluster + host + datastore + alarm + event. Optional add-ons are configured via "Configure Specialized Scopes..." on the main form.'
-    $autoNote.Location = New-Object System.Drawing.Point(20, 250)
-    $autoNote.Size     = New-Object System.Drawing.Size(620, 30)
+    $autoNote.Location = New-Object System.Drawing.Point(20, 290)
+    $autoNote.Size     = New-Object System.Drawing.Size(620, 36)
     $autoNote.Font     = New-Object System.Drawing.Font('Segoe UI', 7, [System.Drawing.FontStyle]::Italic)
     $autoNote.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
     $grpTgt.Controls.Add($autoNote)
@@ -559,7 +568,7 @@ By clicking 'Continue' below, you confirm:
     # room below the row at y=702 so the buttons are never clipped.
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = 'Cancel'
-    $btnCancel.Location = New-Object System.Drawing.Point(420, 702)
+    $btnCancel.Location = New-Object System.Drawing.Point(420, 752)
     $btnCancel.Size     = New-Object System.Drawing.Size(108, 36)
     $btnCancel.DialogResult = 'Cancel'
     $btnCancel.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
@@ -568,7 +577,7 @@ By clicking 'Continue' below, you confirm:
 
     $btnContinue = New-Object System.Windows.Forms.Button
     $btnContinue.Text = 'Continue'
-    $btnContinue.Location = New-Object System.Drawing.Point(540, 702)
+    $btnContinue.Location = New-Object System.Drawing.Point(540, 752)
     $btnContinue.Size     = New-Object System.Drawing.Size(146, 36)
     $btnContinue.BackColor = [System.Drawing.Color]::FromArgb(10, 61, 98)
     $btnContinue.ForeColor = [System.Drawing.Color]::White
@@ -582,10 +591,10 @@ By clicking 'Continue' below, you confirm:
 
     # Continue gated on: license + PSO + at least one target
     $reEvalScript = {
-        $anyTarget = $cbHV.Checked -or $cbVC.Checked -or $cbAV.Checked -or $cbUAG.Checked -or $cbNSX.Checked -or $cbDEM.Checked -or $cbNTNX.Checked -or $cbVIDM.Checked -or $cbUEM.Checked
+        $anyTarget = $cbHV.Checked -or $cbVC.Checked -or $cbAV.Checked -or $cbUAG.Checked -or $cbNSX.Checked -or $cbDEM.Checked -or $cbNTNX.Checked -or $cbVIDM.Checked -or $cbUEM.Checked -or $cbAD.Checked
         $btnContinue.Enabled = ($cbAccept.Checked -and $cbPSO.Checked -and $anyTarget)
     }
-    foreach ($cb in @($cbAccept, $cbPSO, $cbHV, $cbVC, $cbAV, $cbUAG, $cbNSX, $cbDEM, $cbNTNX, $cbVIDM, $cbUEM)) {
+    foreach ($cb in @($cbAccept, $cbPSO, $cbHV, $cbVC, $cbAV, $cbUAG, $cbNSX, $cbDEM, $cbNTNX, $cbVIDM, $cbUEM, $cbAD)) {
         $cb.Add_CheckedChanged($reEvalScript)
     }
 
@@ -603,6 +612,7 @@ By clicking 'Continue' below, you confirm:
         UseNTNX    = $cbNTNX.Checked
         UseVIDM    = $cbVIDM.Checked
         UseUEM     = $cbUEM.Checked
+        UseAD      = $cbAD.Checked
     }
 }
 
@@ -721,6 +731,7 @@ $state.UseDEM     = [bool]$selection.UseDEM
 $state.UseNTNX    = [bool]$selection.UseNTNX
 $state.UseVIDM    = [bool]$selection.UseVIDM
 $state.UseUEM     = [bool]$selection.UseUEM
+$state.UseAD      = [bool]$selection.UseAD
 if (-not $state.PSObject.Properties['DEMConfigShare'])  { $state | Add-Member NoteProperty DEMConfigShare ''  -Force }
 if (-not $state.PSObject.Properties['DEMArchiveShare']) { $state | Add-Member NoteProperty DEMArchiveShare '' -Force }
 if (-not $state.PSObject.Properties['DEMAgentTarget'])  { $state | Add-Member NoteProperty DEMAgentTarget ''  -Force }
