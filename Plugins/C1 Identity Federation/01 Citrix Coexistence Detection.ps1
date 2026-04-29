@@ -24,13 +24,16 @@ foreach ($base in @('ddc','controller','citrix-ddc','xa-controller','xenapp-ddc'
 }
 
 $rows = New-Object System.Collections.ArrayList
-foreach ($host in ($candidates | Select-Object -Unique)) {
-    if (-not $host) { continue }
+# NOTE: do NOT use $host as a foreach variable - $Host is a PowerShell
+# automatic read-only variable; assignment throws 'Cannot overwrite
+# variable Host because it is read-only or constant.'
+foreach ($cand in ($candidates | Select-Object -Unique)) {
+    if (-not $cand) { continue }
     $resolved = $false
-    try { $null = [System.Net.Dns]::GetHostAddresses($host); $resolved = $true } catch { }
+    try { $null = [System.Net.Dns]::GetHostAddresses($cand); $resolved = $true } catch { }
     if (-not $resolved) { continue }
     $row = [ordered]@{
-        Host      = $host
+        Host      = $cand
         DNS       = $resolved
         ICA1494   = $false
         SR2598    = $false
@@ -40,7 +43,7 @@ foreach ($host in ($candidates | Select-Object -Unique)) {
     foreach ($p in @(@{Name='ICA1494';Port=1494},@{Name='SR2598';Port=2598},@{Name='HTTPS443';Port=443})) {
         try {
             $tcp = New-Object System.Net.Sockets.TcpClient
-            $iar = $tcp.BeginConnect($host, $p.Port, $null, $null)
+            $iar = $tcp.BeginConnect($cand, $p.Port, $null, $null)
             if ($iar.AsyncWaitHandle.WaitOne(2500)) { $tcp.EndConnect($iar); $row[$p.Name] = $true }
             $tcp.Close()
         } catch { }

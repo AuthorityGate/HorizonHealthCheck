@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.43'
+$Script:HealthCheckVersion = '0.93.44'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -4253,8 +4253,42 @@ $btnRun.Add_Click({
                     }
                 }
             }
-            $jsonDoc | ConvertTo-Json -Depth 12 | Out-File -FilePath $jsonFile -Encoding utf8
-            Log "[+] JSON sidecar written: $jsonFile"
+            # Try the full Depth 12 serialization first. If it fails (a
+            # plugin's Details rows can carry deeply-nested PowerCLI / COM
+            # references that ConvertTo-Json chokes on), retry at Depth 6
+            # without TableFormat or other complex shapes. NEVER leave a
+            # 0-byte JSON file - that has bitten us before because the
+            # pipeline pre-creates the file and ConvertTo-Json then throws.
+            try {
+                $jsonText = $jsonDoc | ConvertTo-Json -Depth 12 -ErrorAction Stop
+                Set-Content -Path $jsonFile -Value $jsonText -Encoding utf8 -ErrorAction Stop
+                Log "[+] JSON sidecar written: $jsonFile"
+            } catch {
+                Log "[!] JSON sidecar (Depth 12) failed: $($_.Exception.Message). Retrying Depth 6..."
+                try {
+                    $jsonText = $jsonDoc | ConvertTo-Json -Depth 6 -ErrorAction Stop
+                    Set-Content -Path $jsonFile -Value $jsonText -Encoding utf8 -ErrorAction Stop
+                    Log "[+] JSON sidecar (Depth 6 fallback) written: $jsonFile"
+                } catch {
+                    Log "[!] JSON sidecar Depth 6 also failed: $($_.Exception.Message). Writing minimal JSON shell so AGI does not see a 0-byte file."
+                    try {
+                        $minimal = [pscustomobject]@{
+                            Schema = 'HorizonHealthCheck/1'
+                            Generated = (Get-Date).ToString('o')
+                            Server = $serverLabel
+                            Title = $ReportTitle
+                            CustomerName = $customerName
+                            ConnectedBackends = $connected
+                            ResultsError = "Full Results array failed to serialize: $($_.Exception.Message)"
+                            ResultCount = @($results).Count
+                        }
+                        $minimal | ConvertTo-Json -Depth 4 | Set-Content -Path $jsonFile -Encoding utf8
+                        Log "[+] Minimal JSON sidecar written: $jsonFile"
+                    } catch {
+                        Log "[!] Even minimal JSON write failed: $($_.Exception.Message)."
+                    }
+                }
+            }
 
             # ---- Assemble telemetry payload for the post-run POST -----------
             # The cleanup tick on the UI thread reads $sync.TelemetryPayload

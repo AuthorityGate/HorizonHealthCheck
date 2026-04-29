@@ -16,12 +16,15 @@ if (-not $Global:VCConnected) { return }
 Get-DatastoreCluster -ErrorAction SilentlyContinue | Where-Object {
     $_.SdrsAutomationLevel -eq 'FullyAutomated'
 } | ForEach-Object {
+    $cap = [double]$_.CapacityGB
+    $free = [double]$_.FreeSpaceGB
+    $pct = if ($cap -gt 0) { [math]::Round((($cap - $free) / $cap) * 100, 1) } else { '' }
     [pscustomobject]@{
         DatastoreCluster = $_.Name
         SdrsAutomation   = $_.SdrsAutomationLevel
         IOLoadBalance    = $_.IOLoadBalanceEnabled
-        SpaceUtilization = "$([math]::Round((($_.CapacityGB - $_.FreeSpaceGB) / $_.CapacityGB) * 100, 1))%"
-        MemberDatastores = ($_ | Get-Datastore).Count
+        SpaceUtilization = if ("$pct" -ne '') { "$pct%" } else { '(unknown)' }
+        MemberDatastores = @($_ | Get-Datastore -ErrorAction SilentlyContinue).Count
     }
 }
 

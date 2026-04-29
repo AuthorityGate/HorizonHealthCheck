@@ -18,21 +18,29 @@ $rendered = 0
 $servers = @($global:DefaultVIServers | Where-Object { $_ -and $_.IsConnected })
 foreach ($srv in $servers) {
     try {
-        # Walk the vCenter root and recursively check TriggeredAlarmState
-        $rootFolder = Get-View -Server $srv -Id (Get-View ServiceInstance -Server $srv).Content.RootFolder
-        $rootFolder.UpdateViewData('TriggeredAlarmState')
+        # Walk the vCenter root and recursively check TriggeredAlarmState.
+        # Wrap each piece in its own try so a single bad sub-step doesn't
+        # kill the whole plugin (e.g. PowerCLI internal divide-by-zero on
+        # alarms with no Time field).
+        $si = $null; $rootFolder = $null
+        try { $si = Get-View ServiceInstance -Server $srv -ErrorAction Stop } catch { continue }
+        try { $rootFolder = Get-View -Server $srv -Id $si.Content.RootFolder -ErrorAction Stop } catch { continue }
+        try { $rootFolder.UpdateViewData('TriggeredAlarmState') } catch { }
         foreach ($alarm in @($rootFolder.TriggeredAlarmState)) {
             if (-not $alarm) { continue }
-            if ($alarm.OverallStatus -eq 'green') { continue }
-            $alarmDef = Get-View -Server $srv -Id $alarm.Alarm -ErrorAction SilentlyContinue
-            $entityView = Get-View -Server $srv -Id $alarm.Entity -ErrorAction SilentlyContinue
+            if ("$($alarm.OverallStatus)" -eq 'green') { continue }
+            $alarmDef = $null; $entityView = $null
+            try { $alarmDef = Get-View -Server $srv -Id $alarm.Alarm -ErrorAction SilentlyContinue } catch { }
+            try { $entityView = Get-View -Server $srv -Id $alarm.Entity -ErrorAction SilentlyContinue } catch { }
+            $timeStr = ''
+            try { if ($alarm.Time) { $timeStr = ([datetime]$alarm.Time).ToString('yyyy-MM-dd HH:mm') } } catch { }
             [pscustomobject]@{
-                vCenter   = $srv.Name
-                Severity  = [string]$alarm.OverallStatus
-                AlarmName = if ($alarmDef) { $alarmDef.Info.Name } else { '(unknown)' }
-                Entity    = if ($entityView) { $entityView.Name } else { '(unknown)' }
+                vCenter   = "$($srv.Name)"
+                Severity  = "$($alarm.OverallStatus)"
+                AlarmName = if ($alarmDef -and $alarmDef.Info -and $alarmDef.Info.Name) { "$($alarmDef.Info.Name)" } else { '(unknown)' }
+                Entity    = if ($entityView -and $entityView.Name) { "$($entityView.Name)" } else { '(unknown)' }
                 EntityType = if ($entityView) { $entityView.GetType().Name } else { '' }
-                Time      = if ($alarm.Time) { ([datetime]$alarm.Time).ToString('yyyy-MM-dd HH:mm') } else { '' }
+                Time      = $timeStr
                 Acknowledged = [bool]$alarm.Acknowledged
             }
             $rendered++
