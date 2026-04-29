@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.38'
+$Script:HealthCheckVersion = '0.93.39'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -2634,10 +2634,32 @@ function Global:Show-GoldImagePicker {
     $lblStatus.Text     = 'Connecting to vCenter ...'
     $dlgGold.Controls.Add($lblStatus)
 
+    # Live search box - filters the VM list as the operator types. Case-
+    # insensitive substring match against name, cluster, OS, power, tools.
+    $lblSearch = New-Object System.Windows.Forms.Label
+    $lblSearch.Text = 'Search (name / cluster / OS):'
+    $lblSearch.Location = New-Object System.Drawing.Point(14, 40)
+    $lblSearch.Size     = New-Object System.Drawing.Size(180, 20)
+    $dlgGold.Controls.Add($lblSearch)
+
+    $tbSearch = New-Object System.Windows.Forms.TextBox
+    $tbSearch.Location = New-Object System.Drawing.Point(196, 38)
+    $tbSearch.Size     = New-Object System.Drawing.Size(540, 22)
+    $tbSearch.Anchor   = 'Top,Left,Right'
+    $dlgGold.Controls.Add($tbSearch)
+
+    $lblMatch = New-Object System.Windows.Forms.Label
+    $lblMatch.Text = ''
+    $lblMatch.Location = New-Object System.Drawing.Point(744, 40)
+    $lblMatch.Size     = New-Object System.Drawing.Size(330, 20)
+    $lblMatch.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
+    $lblMatch.Anchor   = 'Top,Right'
+    $dlgGold.Controls.Add($lblMatch)
+
     # ListView of VMs with checkboxes
     $lv = New-Object System.Windows.Forms.ListView
-    $lv.Location = New-Object System.Drawing.Point(14, 38)
-    $lv.Size     = New-Object System.Drawing.Size(1060, 540)
+    $lv.Location = New-Object System.Drawing.Point(14, 68)
+    $lv.Size     = New-Object System.Drawing.Size(1060, 510)
     $lv.View     = 'Details'
     $lv.CheckBoxes = $true
     $lv.FullRowSelect = $true
@@ -2706,9 +2728,84 @@ function Global:Show-GoldImagePicker {
     $dlgGold.Controls.Add($btnCancelGold)
 
     $script:filterMode = 'all'
+    # Cache: every VM that came back from vCenter on the last enumerate, with
+    # its display columns pre-computed. The search textbox filters this cache
+    # client-side so typing does NOT re-query vCenter on every keystroke.
+    $script:gpRows = @()
+    # Session-wide check state, keyed by VM name. Survives filter / search
+    # changes (the ListView gets cleared+repopulated on every render, so we
+    # cannot rely on per-item Checked state to persist across renders).
+    # Seeded from the saved $Script:ManualGoldImages list so previous picks
+    # are pre-checked on open.
+    $script:gpChecked = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in @($Script:ManualGoldImages)) { if ($n) { [void]$script:gpChecked.Add($n) } }
+    $script:gpRenderInProgress = $false
+
+    # Render the current $script:gpRows into the ListView, optionally filtered
+    # by $tbSearch.Text (case-insensitive substring match across name +
+    # cluster + power + tools + OS columns). Initial check state for each
+    # row comes from the session-wide $script:gpChecked set so picks survive
+    # filter / search changes.
+    $render = {
+        $script:gpRenderInProgress = $true
+        $lv.BeginUpdate()
+        try {
+            $lv.Items.Clear()
+            $needle = if ($tbSearch -and $tbSearch.Text) { $tbSearch.Text.Trim().ToLowerInvariant() } else { '' }
+            $shown = 0
+            foreach ($r in $script:gpRows) {
+                if ($needle) {
+                    $hay = "$($r.Name) $($r.Cluster) $($r.Power) $($r.Tools) $($r.OS)".ToLowerInvariant()
+                    if ($hay -notmatch [regex]::Escape($needle)) { continue }
+                }
+                $item = New-Object System.Windows.Forms.ListViewItem([string]$r.Name)
+                [void]$item.SubItems.Add([string]$r.Cluster)
+                [void]$item.SubItems.Add([string]$r.Power)
+                [void]$item.SubItems.Add([string]$r.Tools)
+                [void]$item.SubItems.Add([string]$r.OS)
+                [void]$item.SubItems.Add([string]$r.Snaps)
+                [void]$item.SubItems.Add([string]$r.Sizing)
+                $existingCred = if ($Script:ManualGoldImageCreds -and $Script:ManualGoldImageCreds.ContainsKey($r.Name)) { $Script:ManualGoldImageCreds[$r.Name] } else { '' }
+                [void]$item.SubItems.Add([string]$existingCred)
+                if ($script:gpChecked.Contains($r.Name)) { $item.Checked = $true }
+                if ($r.Power -eq 'PoweredOff') {
+                    $item.ForeColor = [System.Drawing.Color]::FromArgb(180, 60, 30)
+                }
+                [void]$lv.Items.Add($item)
+                $shown++
+            }
+            if ($needle) {
+                $lblMatch.Text = "$shown of $($script:gpRows.Count) match  |  $($script:gpChecked.Count) checked"
+            } else {
+                $lblMatch.Text = "$($script:gpRows.Count) VMs  |  $($script:gpChecked.Count) checked"
+            }
+        } finally {
+            $lv.EndUpdate()
+            $script:gpRenderInProgress = $false
+        }
+    }
+
+    # Track every check/uncheck so a row's state survives filter changes.
+    # Skip events fired during $render (we set Checked programmatically there).
+    $lv.Add_ItemChecked({
+        param($s,$e)
+        if ($script:gpRenderInProgress) { return }
+        $name = $e.Item.Text
+        if ($e.Item.Checked) {
+            [void]$script:gpChecked.Add($name)
+        } else {
+            [void]$script:gpChecked.Remove($name)
+        }
+        # Update the counter without re-rendering (avoid recursion + flicker)
+        $needle = if ($tbSearch -and $tbSearch.Text) { $tbSearch.Text.Trim().ToLowerInvariant() } else { '' }
+        if ($needle) {
+            $lblMatch.Text = "$($lv.Items.Count) of $($script:gpRows.Count) match  |  $($script:gpChecked.Count) checked"
+        } else {
+            $lblMatch.Text = "$($script:gpRows.Count) VMs  |  $($script:gpChecked.Count) checked"
+        }
+    })
 
     $populate = {
-        $lv.Items.Clear()
         $lblStatus.Text = 'Querying vCenter for VMs ...'
         $dlgGold.Refresh()
         try {
@@ -2719,6 +2816,7 @@ function Global:Show-GoldImagePicker {
                 'powered-on' { $allVms | Where-Object { $_.PowerState -eq 'PoweredOn' } }
                 default      { $allVms }
             }
+            $rows = @()
             foreach ($vm in ($vms | Sort-Object Name)) {
                 # PowerCLI returns enum/string mixes; force every subitem to a
                 # plain [string] so ListViewSubItemCollection.Add picks the
@@ -2728,32 +2826,27 @@ function Global:Show-GoldImagePicker {
                 $os      = if ($vm.Guest  -and $vm.Guest.OSFullName) { [string]$vm.Guest.OSFullName } else { '' }
                 $snaps   = @(Get-Snapshot -VM $vm -ErrorAction SilentlyContinue).Count
                 $sizing  = "$($vm.NumCpu)c / $([math]::Round($vm.MemoryGB,0))GB"
-                $item = New-Object System.Windows.Forms.ListViewItem([string]$vm.Name)
-                [void]$item.SubItems.Add([string]$cluster)
-                [void]$item.SubItems.Add([string]$vm.PowerState)
-                [void]$item.SubItems.Add([string]$tools)
-                [void]$item.SubItems.Add([string]$os)
-                [void]$item.SubItems.Add([string]$snaps)
-                [void]$item.SubItems.Add([string]$sizing)
-                # Cred Profile column - empty by default, populated on per-VM
-                # selection. The picker stores per-VM cred mapping in
-                # $Script:ManualGoldImageCreds.
-                $existingCred = if ($Script:ManualGoldImageCreds.ContainsKey($vm.Name)) { $Script:ManualGoldImageCreds[$vm.Name] } else { '' }
-                [void]$item.SubItems.Add([string]$existingCred)
-                # Pre-check if name in the current saved list
-                if ($Script:ManualGoldImages -contains $vm.Name) { $item.Checked = $true }
-                # Color code powered-off
-                if ($vm.PowerState -eq 'PoweredOff') {
-                    $item.ForeColor = [System.Drawing.Color]::FromArgb(180, 60, 30)
+                $rows += [pscustomobject]@{
+                    Name    = [string]$vm.Name
+                    Cluster = $cluster
+                    Power   = [string]$vm.PowerState
+                    Tools   = $tools
+                    OS      = $os
+                    Snaps   = [string]$snaps
+                    Sizing  = $sizing
                 }
-                $lv.Items.Add($item) | Out-Null
             }
-            $lblStatus.Text = "Loaded $($vms.Count) VMs (filter: $script:filterMode). Check the gold-image VMs you want to scan, then Save."
+            $script:gpRows = $rows
+            $lblStatus.Text = "Loaded $($rows.Count) VMs (filter: $script:filterMode). Type in the search box above to narrow the list. Check VMs and Save."
+            & $render
         } catch {
             $lblStatus.Text = "Failed to enumerate VMs: $($_.Exception.Message)"
             $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
         }
     }
+
+    # Live filter: every keystroke re-renders from the cached row list.
+    $tbSearch.Add_TextChanged({ & $render })
 
     # Connect to vCenter for the picker
     Import-Module VMware.VimAutomation.Core -ErrorAction SilentlyContinue
@@ -2933,7 +3026,9 @@ function Global:Show-GoldImagePicker {
     })
 
     $btnSave.Add_Click({
-        $picked = @($lv.CheckedItems | ForEach-Object { $_.Text })
+        # Use the session-wide checked set, not $lv.CheckedItems - the latter
+        # only contains the rows currently passing the search filter.
+        $picked = @($script:gpChecked)
         $Script:ManualGoldImages = $picked
         # Drop per-VM cred entries for VMs that are not in the saved list
         $stale = @($Script:ManualGoldImageCreds.Keys | Where-Object { $picked -notcontains $_ })
