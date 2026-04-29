@@ -29,17 +29,23 @@ if (-not (Test-Path $stateDir)) { New-Item -Path $stateDir -ItemType Directory -
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.28'
+$Script:HealthCheckVersion = '0.93.29'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
 }
 
 $Script:UpdateChannel = @{
-    GitHubOwner   = 'AuthorityGate'
-    GitHubRepo    = 'HorizonHealthCheck'
-    Tag           = 'v0.93.1-PreRelease'    # tracks the pre-release channel
+    GitHubOwner    = 'AuthorityGate'
+    GitHubRepo     = 'HorizonHealthCheck'
+    Branch         = 'main'
+    # Auto-updater pulls the live branch tarball, not a static release asset.
+    # Pinning to a release tag was a downgrade-trap: the release ZIP was cut
+    # once and never re-published, so any client whose local fell behind would
+    # download year-old code while the anti-loop guard forced VERSION to look
+    # current. The branch archive always matches the VERSION on main.
     VersionFileUrl = 'https://raw.githubusercontent.com/AuthorityGate/HorizonHealthCheck/main/VERSION'
+    SourceZipUrl   = 'https://codeload.github.com/AuthorityGate/HorizonHealthCheck/zip/refs/heads/main'
 }
 
 function Invoke-HealthCheckAutoUpdate {
@@ -81,15 +87,13 @@ function Invoke-HealthCheckAutoUpdate {
         return $report
     }
 
-    # Download the release ZIP and extract to a temp staging dir.
-    $tag = $Script:UpdateChannel.Tag
-    $zipName = "HealthCheckPS1-$tag.zip"
-    $assetUrl = "https://github.com/$($Script:UpdateChannel.GitHubOwner)/$($Script:UpdateChannel.GitHubRepo)/releases/download/$tag/$zipName"
+    # Download the live branch tarball (always matches main/VERSION). NOT a
+    # release asset - those are cut once and rot out of sync with main.
     $stage = Join-Path $env:TEMP "HealthCheckPS1-update-$($PID)-$(Get-Random)"
-    $zip = Join-Path $stage $zipName
+    $zip = Join-Path $stage 'main.zip'
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        Invoke-WebRequest -Uri $assetUrl -UseBasicParsing -OutFile $zip -TimeoutSec ([Math]::Max($TimeoutSec, 60)) -ErrorAction Stop
+        Invoke-WebRequest -Uri $Script:UpdateChannel.SourceZipUrl -UseBasicParsing -OutFile $zip -TimeoutSec ([Math]::Max($TimeoutSec, 60)) -ErrorAction Stop
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $stage)
     } catch {
@@ -99,15 +103,36 @@ function Invoke-HealthCheckAutoUpdate {
         return $report
     }
 
-    # The ZIP unpacks as <stage>/HealthCheckPS1/* (set via git archive --prefix).
-    $extracted = Join-Path $stage 'HealthCheckPS1'
-    if (-not (Test-Path $extracted)) {
-        # GitHub auto-source-zip has a different prefix - find the first dir.
-        $extracted = Get-ChildItem -Path $stage -Directory | Select-Object -First 1 -ExpandProperty FullName
-    }
+    # codeload.github.com/<owner>/<repo>/zip/refs/heads/<branch> unpacks as
+    # <stage>/<repo>-<branch>/* - find that first child directory dynamically.
+    $extracted = Get-ChildItem -Path $stage -Directory | Where-Object { $_.Name -ne '__MACOSX' } | Select-Object -First 1 -ExpandProperty FullName
     if (-not $extracted -or -not (Test-Path $extracted)) {
         $report.Error = 'Extracted package layout unrecognized.'
         $report.Action = 'Skipped (bad package)'
+        try { Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue } catch { }
+        return $report
+    }
+
+    # SAFETY GATE: confirm the ZIP we just extracted actually contains code at
+    # the version we promised the user. If the ZIP's VERSION disagrees with
+    # the probed remote VERSION, refuse to swap files - that mismatch is the
+    # exact pattern that caused the old release-pinned updater to overwrite
+    # live plugins with year-old code.
+    $zipVersion = $null
+    try {
+        $zipVersionFile = Join-Path $extracted 'VERSION'
+        if (Test-Path $zipVersionFile) { $zipVersion = (Get-Content $zipVersionFile -Raw -ErrorAction Stop).Trim() }
+    } catch { }
+    if (-not $zipVersion) {
+        $report.Error = 'Downloaded package has no VERSION file - refusing to swap files.'
+        $report.Action = 'Skipped (package integrity check failed)'
+        try { Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue } catch { }
+        return $report
+    }
+    if ($zipVersion -ne $remote) {
+        $report.Error = "Package VERSION ($zipVersion) does not match remote VERSION ($remote). Refusing to swap files to avoid a downgrade."
+        $report.Action = 'Skipped (version mismatch)'
+        try { Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue } catch { }
         return $report
     }
 
@@ -125,12 +150,10 @@ function Invoke-HealthCheckAutoUpdate {
                 Copy-Item -Path $_.FullName -Destination $dest -Force
             }
         }
-        # Anti-loop guard: if the ZIP shipped a stale VERSION file (operator
-        # bumped the published VERSION on main but didn't refresh the release
-        # asset), the auto-updater would otherwise loop forever - it would
-        # always see remote > local. Force the local VERSION to match what
-        # we just deployed from the remote so the next launch sees parity.
-        try { Set-Content -Path (Join-Path $RootPath 'VERSION') -Value $remote -Encoding UTF8 -ErrorAction Stop } catch { }
+        # No anti-loop clobber needed: the VERSION inside the ZIP is the
+        # canonical value from main, and we already gated on that matching
+        # the remote VERSION probe. The branch-tarball update path is
+        # self-consistent by construction.
         $report.Updated = $true
         $report.Action = "Updated $LocalVersion -> $remote (relaunch required)"
     } catch {
