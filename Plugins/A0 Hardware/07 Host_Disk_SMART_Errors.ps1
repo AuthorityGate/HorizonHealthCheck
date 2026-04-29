@@ -53,13 +53,20 @@ function Test-SmartAttribute {
     $p = ($Parameter | ForEach-Object { $_.ToLower() })
 
     # 1. Drive temperature (HIGHER = worse). ESXi reports Value in deg C,
-    #    Threshold = max safe deg C. The original plugin had this inverted.
+    #    Threshold = max safe deg C. Behavior:
+    #    - When the drive REPORTS a Threshold > 0: trust it strictly
+    #      (Value > Threshold = pre-fail).
+    #    - When Threshold == 0 (no per-drive max reported, common on
+    #      older SanDisk / OEM SSDs): use a conservative absolute limit.
+    #      Most SSDs spec 70-85 deg C as normal operating max, with
+    #      catastrophic damage above ~90 deg C. 71 deg C with no rated
+    #      threshold is hot but NOT imminent failure - emit Info.
     if ($p -match 'drive\s+temperature' -or $p -eq 'temperature' -or $p -match 'composite\s+temperature') {
         if ($null -ne $vNum -and $null -ne $tNum -and $tNum -gt 0 -and $vNum -gt $tNum) {
-            return @{ Verdict = 'prefail'; Reason = "Temperature $vNum C > rated max $tNum C" }
+            return @{ Verdict = 'prefail'; Reason = "Temperature $vNum C > drive-rated max $tNum C" }
         }
-        if ($null -ne $vNum -and $vNum -gt 70) {
-            return @{ Verdict = 'prefail'; Reason = "Temperature $vNum C exceeds 70 C absolute limit" }
+        if ($null -ne $vNum -and $vNum -gt 90) {
+            return @{ Verdict = 'prefail'; Reason = "Temperature $vNum C exceeds 90 C catastrophic limit" }
         }
         return @{ Verdict = 'info'; Reason = '' }
     }

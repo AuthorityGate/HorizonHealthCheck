@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.56'
+$Script:HealthCheckVersion = '0.93.57'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -688,6 +688,7 @@ $state = @{
     UseCA      = $false; CAServerList = ''
     UseSQL     = $false; SQLServerList = ''
     UseEntra   = $false; EntraSyncServer = ''
+    UseAD      = $false; ADForests  = @()    # @(@{Forest='forest.example';CredProfile='AD - svc'},...)
     OutputPath = (Join-Path $root 'Reports')
     GenerateHtml = $true; GenerateWord = $false; ShowWord = $false
     DocAuthor  = 'AuthorityGate'
@@ -1497,6 +1498,196 @@ $lblUEMHelp.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
 $lblUEMHelp.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
 $tabUEM.Controls.Add($lblUEMHelp)
 
+# ---- Active Directory tab -----------------------------------------------
+# AD plugins traverse one or more forests/domains. Each row in the grid
+# carries a Forest FQDN + an optional credential-profile name. Empty profile
+# = run AD cmdlets under the current Windows user. Plugins are invoked
+# once per row in the runner, so a single health-check can validate
+# replication, sites, FSMO etc. across multiple domains/trusts.
+$tabAD = New-Object System.Windows.Forms.TabPage; $tabAD.Text = 'AD'; $tabs.TabPages.Add($tabAD)
+$cAD = @{}
+$cAD.Use = New-Object System.Windows.Forms.CheckBox
+$cAD.Use.Text     = 'Probe configured AD forests / domains (uses RSAT ActiveDirectory module)'
+$cAD.Use.Location = New-Object System.Drawing.Point(20, 18); $cAD.Use.Size = New-Object System.Drawing.Size(620, 22)
+$cAD.Use.Checked  = $state.UseAD
+$tabAD.Controls.Add($cAD.Use)
+
+$lblADHdr = New-Object System.Windows.Forms.Label
+$lblADHdr.Text = "DC/Server is the FQDN of the DC or DNS server the runner can reach (e.g. 'AGIADDNS01.authoritygate.net'). Forest is the forest identity (e.g. 'authoritygate.net') and can be left blank to auto-discover. Credential is optional - blank = current Windows user."
+$lblADHdr.Location = New-Object System.Drawing.Point(20, 44); $lblADHdr.Size = New-Object System.Drawing.Size(620, 32)
+$lblADHdr.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
+$lblADHdr.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
+$tabAD.Controls.Add($lblADHdr)
+
+$cAD.Grid = New-Object System.Windows.Forms.DataGridView
+$cAD.Grid.Location = New-Object System.Drawing.Point(20, 80)
+$cAD.Grid.Size     = New-Object System.Drawing.Size(620, 140)
+$cAD.Grid.AllowUserToAddRows    = $false
+$cAD.Grid.AllowUserToDeleteRows = $false
+$cAD.Grid.MultiSelect           = $false
+$cAD.Grid.SelectionMode         = 'FullRowSelect'
+$cAD.Grid.RowHeadersVisible     = $false
+$cAD.Grid.AutoSizeColumnsMode   = 'Fill'
+$cAD.Grid.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$null = $cAD.Grid.Columns.Add('colDC','DC / DNS Server FQDN')
+$null = $cAD.Grid.Columns.Add('colForest','Forest FQDN (optional)')
+$null = $cAD.Grid.Columns.Add('colCred','Credential Profile')
+$null = $cAD.Grid.Columns.Add('colStatus','Status')
+$cAD.Grid.Columns['colStatus'].ReadOnly = $true
+$tabAD.Controls.Add($cAD.Grid)
+
+# Pre-populate from saved state. Tolerates rows written by older builds that
+# only had a single Forest field - in that case Server defaults to the same.
+foreach ($e in @($state.ADForests)) {
+    if (-not $e) { continue }
+    $dc = ''
+    $f  = ''
+    $cp = ''
+    if ($e.PSObject) {
+        if ($e.PSObject.Properties['Server'])      { $dc = [string]$e.Server }
+        if ($e.PSObject.Properties['Forest'])      { $f  = [string]$e.Forest }
+        if ($e.PSObject.Properties['CredProfile']) { $cp = [string]$e.CredProfile }
+    }
+    if (-not $dc -and $f) { $dc = $f }   # legacy single-field row
+    if (-not $dc) { continue }
+    [void]$cAD.Grid.Rows.Add($dc, $f, $cp, '')
+}
+
+# Add row
+$cAD.BtnAdd = New-Object System.Windows.Forms.Button
+$cAD.BtnAdd.Text = 'Add forest...'
+$cAD.BtnAdd.Location = New-Object System.Drawing.Point(20, 230); $cAD.BtnAdd.Size = New-Object System.Drawing.Size(120, 26)
+$cAD.BtnAdd.FlatStyle = 'Flat'
+$cAD.BtnAdd.Add_Click({
+    $dc = Read-NameDialog -Title 'Add DC / DNS server' -Prompt "Reachable DC or DNS server FQDN (e.g. 'AGIADDNS01.authoritygate.net'):" -DefaultValue ''
+    if (-not $dc) { return }
+    $f = Read-NameDialog -Title 'Forest FQDN (optional)' -Prompt "Forest FQDN (e.g. 'authoritygate.net'). Leave blank to auto-discover from the DC above:" -DefaultValue ''
+    [void]$cAD.Grid.Rows.Add($dc.Trim(), ($(if ($f) { $f.Trim() } else { '' })), '', '')
+})
+$tabAD.Controls.Add($cAD.BtnAdd)
+
+# Set credential on selected row
+$cAD.BtnCred = New-Object System.Windows.Forms.Button
+$cAD.BtnCred.Text = 'Set credential...'
+$cAD.BtnCred.Location = New-Object System.Drawing.Point(150, 230); $cAD.BtnCred.Size = New-Object System.Drawing.Size(140, 26)
+$cAD.BtnCred.FlatStyle = 'Flat'
+$cAD.BtnCred.Tag = @{ Grid = $cAD.Grid }
+$cAD.BtnCred.Add_Click({
+    param($s,$e)
+    $g = $s.Tag.Grid
+    if (-not $g -or $g.SelectedRows.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show('Select a row first.', 'Set credential', 'OK', 'Information') | Out-Null
+        return
+    }
+    $row = $g.SelectedRows[0]
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+    $profiles = @(Get-AGCredentialProfile | Where-Object { $_.Type -in 'Domain','Other' } | Sort-Object Name)
+    foreach ($p in $profiles) {
+        $mi = $menu.Items.Add("Use profile: $($p.Name)  -  $($p.UserName)")
+        $mi.Tag = @{ Profile = $p.Name; Row = $row }
+        $mi.Add_Click({
+            param($mis,$me)
+            $t = $mis.Tag
+            if ($t -and $t.Row) { $t.Row.Cells['colCred'].Value = $t.Profile }
+        })
+    }
+    if ($profiles.Count -gt 0) { $menu.Items.Add('-') | Out-Null }
+    $miClear = $menu.Items.Add('Clear (use current Windows credentials)')
+    $miClear.Tag = @{ Row = $row }
+    $miClear.Add_Click({ param($mis,$me) if ($mis.Tag -and $mis.Tag.Row) { $mis.Tag.Row.Cells['colCred'].Value = '' } })
+    $miMgr = $menu.Items.Add('Manage Credentials...')
+    $miMgr.Add_Click({ Show-CredentialProfileDialog })
+    $menu.Show($s, 0, $s.Height)
+})
+$tabAD.Controls.Add($cAD.BtnCred)
+
+# Remove selected row
+$cAD.BtnRemove = New-Object System.Windows.Forms.Button
+$cAD.BtnRemove.Text = 'Remove selected'
+$cAD.BtnRemove.Location = New-Object System.Drawing.Point(300, 230); $cAD.BtnRemove.Size = New-Object System.Drawing.Size(130, 26)
+$cAD.BtnRemove.FlatStyle = 'Flat'
+$cAD.BtnRemove.Tag = @{ Grid = $cAD.Grid }
+$cAD.BtnRemove.Add_Click({
+    param($s,$e)
+    $g = $s.Tag.Grid
+    if (-not $g -or $g.SelectedRows.Count -eq 0) { return }
+    $g.Rows.Remove($g.SelectedRows[0])
+})
+$tabAD.Controls.Add($cAD.BtnRemove)
+
+# RSAT presence + install button
+$rsatPresentAD = [bool](Get-Module -ListAvailable ActiveDirectory)
+$cAD.LblRsat = New-Object System.Windows.Forms.Label
+if ($rsatPresentAD) {
+    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: INSTALLED on this runner.'
+    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+} else {
+    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: NOT installed (AD plugins will skip until installed).'
+    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+}
+$cAD.LblRsat.Location = New-Object System.Drawing.Point(20, 268); $cAD.LblRsat.Size = New-Object System.Drawing.Size(440, 18)
+$cAD.LblRsat.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+$tabAD.Controls.Add($cAD.LblRsat)
+
+$cAD.BtnRsat = New-Object System.Windows.Forms.Button
+$cAD.BtnRsat.Text = if ($rsatPresentAD) { 'RSAT installed' } else { 'Install RSAT now...' }
+$cAD.BtnRsat.Location = New-Object System.Drawing.Point(470, 264); $cAD.BtnRsat.Size = New-Object System.Drawing.Size(170, 24)
+$cAD.BtnRsat.Enabled = (-not $rsatPresentAD)
+$cAD.BtnRsat.Add_Click({
+    $rsatScript = Join-Path $PSScriptRoot 'Tools\Install-RSAT.ps1'
+    if (-not (Test-Path $rsatScript)) {
+        [System.Windows.Forms.MessageBox]::Show("Install-RSAT.ps1 not found at $rsatScript.", 'RSAT install', 'OK', 'Error') | Out-Null
+        return
+    }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$rsatScript) -WindowStyle Normal
+    [System.Windows.Forms.MessageBox]::Show("RSAT install launched in elevated PowerShell. Wait for it to complete (~1-2 min), then close + reopen this GUI to detect the new module.", 'RSAT install', 'OK', 'Information') | Out-Null
+})
+$tabAD.Controls.Add($cAD.BtnRsat)
+
+# Test connectivity for all configured forests
+$cAD.BtnTest = New-Object System.Windows.Forms.Button
+$cAD.BtnTest.Text = 'Test all forests'
+$cAD.BtnTest.Location = New-Object System.Drawing.Point(20, 296); $cAD.BtnTest.Size = New-Object System.Drawing.Size(140, 26)
+$cAD.BtnTest.FlatStyle = 'Flat'
+$cAD.BtnTest.Tag = @{ Grid = $cAD.Grid }
+$cAD.BtnTest.Add_Click({
+    param($s,$e)
+    $g = $s.Tag.Grid
+    if (-not $g) { return }
+    if (-not (Get-Module -ListAvailable ActiveDirectory)) {
+        [System.Windows.Forms.MessageBox]::Show('RSAT ActiveDirectory module is not installed - cannot test.', 'Test forests', 'OK', 'Warning') | Out-Null
+        return
+    }
+    Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
+    foreach ($row in $g.Rows) {
+        $dc = [string]$row.Cells['colDC'].Value
+        $forest = [string]$row.Cells['colForest'].Value
+        $cp = [string]$row.Cells['colCred'].Value
+        if (-not $dc) { $row.Cells['colStatus'].Value = '(no DC FQDN)'; continue }
+        $row.Cells['colStatus'].Value = 'testing...'
+        $adArgs = @{ Server = $dc; ErrorAction = 'Stop' }
+        if ($cp) {
+            try { $adArgs.Credential = Get-AGCredentialAsPSCredential -Name $cp } catch {
+                $row.Cells['colStatus'].Value = "cred decrypt failed: $($_.Exception.Message)"; continue
+            }
+        }
+        try {
+            $d = Get-ADDomain @adArgs
+            $statusMsg = "OK (DNSRoot=$($d.DNSRoot), Forest=$($d.Forest))"
+            if (-not $forest) {
+                # Auto-fill discovered forest into the row for convenience
+                $row.Cells['colForest'].Value = [string]$d.Forest
+            } elseif ($forest -ne $d.Forest) {
+                $statusMsg += " - WARNING: configured Forest '$forest' != DC's actual Forest '$($d.Forest)'"
+            }
+            $row.Cells['colStatus'].Value = $statusMsg
+        } catch {
+            $row.Cells['colStatus'].Value = "FAIL: $($_.Exception.Message)"
+        }
+    }
+})
+$tabAD.Controls.Add($cAD.BtnTest)
+
 $tabUAG = New-Object System.Windows.Forms.TabPage; $tabUAG.Text = 'UAG';         $tabs.TabPages.Add($tabUAG)
 $cUAG = New-PanelControls $tabUAG $false
 $cUAG.Use.Text    = 'Connect to Unified Access Gateway (admin port)'
@@ -1768,6 +1959,8 @@ $Script:CategoryScopeMap = @{
     '99 vSphere Lifecycle'            = @('VC')
     'A0 Hardware'                     = @('VC')
     'B1 Identity Manager'             = @('VIDM')
+    'B3 Active Directory'             = @('AD')
+    'B4 DNS DHCP'                     = @('AD')
     'B5 Workspace ONE Access'         = @('VIDM')
     'B6 Workspace ONE UEM'            = @('UEM')
     'B7 Backup and DR'                = @('VC')
@@ -1791,6 +1984,7 @@ function Global:Update-PluginScope {
         NTNX = $cNTNX.Use.Checked
         VIDM = $cVIDM.Use.Checked
         UEM  = $cUEM.Use.Checked
+        AD   = if ($cAD -and $cAD.Use) { $cAD.Use.Checked } else { $false }
     }
     foreach ($catNode in $tree.Nodes) {
         if ($catNode.Tag -notlike 'CATEGORY:*') { continue }
@@ -1830,7 +2024,7 @@ function Global:Update-PluginScope {
 
 # Wire the scope-checkbox CheckedChanged events. Capture-by-closure so the
 # handlers find the right $tree + map at fire time.
-foreach ($cb in @($cHV.Use, $cVC.Use, $cAV.Use, $cUAG.Use, $cNSX.Use, $cDEM.Use, $cNTNX.Use, $cVIDM.Use, $cUEM.Use)) {
+foreach ($cb in @($cHV.Use, $cVC.Use, $cAV.Use, $cUAG.Use, $cNSX.Use, $cDEM.Use, $cNTNX.Use, $cVIDM.Use, $cUEM.Use, $cAD.Use)) {
     $cb.Add_CheckedChanged({ Update-PluginScope }.GetNewClosure())
 }
 # Initial sync so the tree reflects the starter dialog's scope picks.
@@ -2052,21 +2246,24 @@ $btnSpec.Add_Click({
     $tbCust.Text = $Script:CustomerName
     $dlg.Controls.Add($tbCust)
 
-    # Active Directory forest + optional credential
+    # Active Directory configuration moved to the dedicated 'AD' tab on the
+    # main form (multi-forest list + per-row credential profiles + Test).
+    # The legacy single-forest field below is kept for state.json files
+    # written by older builds; it's read-only and grey to discourage use.
     $lblAD = New-Object System.Windows.Forms.Label
-    $lblAD.Text = "Active Directory forest FQDN OR a specific DC FQDN (e.g. 'authoritygate.net' or 'dc01.authoritygate.net'):"
-    $lblAD.Location = New-Object System.Drawing.Point(14, 116); $lblAD.Size = New-Object System.Drawing.Size(600, 18)
+    $lblAD.Text = "Active Directory: configure on the AD tab of the main form (multi-forest list, separate DC + Forest fields, per-row credentials)."
+    $lblAD.Location = New-Object System.Drawing.Point(14, 116); $lblAD.Size = New-Object System.Drawing.Size(600, 32)
+    $lblAD.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
+    $lblAD.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
     $dlg.Controls.Add($lblAD)
+    # Legacy fallback (hidden) - kept so the state.json migration path works.
     $tbAD = New-Object System.Windows.Forms.TextBox
-    $tbAD.Location = New-Object System.Drawing.Point(14, 136); $tbAD.Size = New-Object System.Drawing.Size(450, 22)
+    $tbAD.Visible = $false
     $tbAD.Text = $Script:SpecADForest
     $dlg.Controls.Add($tbAD)
     $btnADCred = New-Object System.Windows.Forms.Button
-    $btnADCred.Text = if ($Script:SpecADCredential) { "Cred: $($Script:SpecADCredential.UserName)" } else { 'Set AD Cred...' }
-    $btnADCred.Location = New-Object System.Drawing.Point(470, 134); $btnADCred.Size = New-Object System.Drawing.Size(144, 26)
-    if ($Script:SpecADCredential) {
-        $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
-    }
+    $btnADCred.Visible = $false
+    $btnADCred.Text = 'Set AD Cred...'
     # Store the button reference on its own Tag so menu-item handlers can
     # find it without relying on PowerShell closure scope (which gets eaten
     # by WinForms' event-dispatch boundary in some PS5.1 builds).
@@ -3619,6 +3816,17 @@ $btnRun.Add_Click({
         $state.DEMAgentTarget  = $cDEM.AgentTarget.Text
     }
     $state.UseNSX     = $cNSX.Use.Checked; $state.NSXServer = $cNSX.Server.Text; $state.NSXUser = $cNSX.User.Text; $state.NSXSkipCert = $cNSX.SkipCert.Checked
+    if ($cAD) {
+        $state.UseAD = [bool]$cAD.Use.Checked
+        $rows = @()
+        foreach ($r in $cAD.Grid.Rows) {
+            $f = [string]$r.Cells['colForest'].Value
+            if (-not $f -or -not $f.Trim()) { continue }
+            $cp = [string]$r.Cells['colCred'].Value
+            $rows += @{ Forest = $f.Trim(); CredProfile = $cp }
+        }
+        $state.ADForests = $rows
+    }
     $state.OutputPath = $tbOutPath.Text;   $state.GenerateHtml = $cbHtml.Checked
     $state.GenerateWord = $cbWord.Checked; $state.ShowWord = $cbShowWord.Checked; $state.DocAuthor = $tbAuthor.Text
 
@@ -3838,6 +4046,24 @@ $btnRun.Add_Click({
     $proxy.SetVariable('demAgentTarget',        ([string]$state.DEMAgentTarget))
     $proxy.SetVariable('specADForest',          $Script:SpecADForest)
     $proxy.SetVariable('specADCredential',      $Script:SpecADCredential)
+    # AD tab list. Each row is hashtable @{ Server; Forest; CredProfile }.
+    # The runspace resolves CredProfile to a [pscredential] at run time.
+    $adRows = @()
+    if ($state.UseAD) {
+        foreach ($r in @($state.ADForests)) {
+            if (-not $r) { continue }
+            $sv = ''; $fr = ''; $cp = ''
+            if ($r.PSObject) {
+                if ($r.PSObject.Properties['Server'])      { $sv = [string]$r.Server }
+                if ($r.PSObject.Properties['Forest'])      { $fr = [string]$r.Forest }
+                if ($r.PSObject.Properties['CredProfile']) { $cp = [string]$r.CredProfile }
+            } elseif ($r -is [hashtable]) {
+                $sv = [string]$r.Server; $fr = [string]$r.Forest; $cp = [string]$r.CredProfile
+            }
+            if ($sv) { $adRows += @{ Server = $sv; Forest = $fr; CredProfile = $cp } }
+        }
+    }
+    $proxy.SetVariable('adForests', $adRows)
     $proxy.SetVariable('specAVPackagingVms',    $specAVP)
     $proxy.SetVariable('specMFAExternalCheck',  [bool]$Script:SpecMFAExternalCheck)
     $proxy.SetVariable('manualGoldImages',      @($Script:ManualGoldImages))
@@ -4261,8 +4487,30 @@ $btnRun.Add_Click({
             elseif ($specDEMShare) { $Global:DEMConfigShare = $specDEMShare }
             if ($demArchiveShare) { $Global:DEMArchiveShare = $demArchiveShare }
             if ($demAgentTarget)  { $Global:DEMAgentTarget  = $demAgentTarget }
-            if ($specADForest)                                                  { $Global:ADForestFqdn           = $specADForest }
-            if ($specADCredential)                                              { $Global:ADCredential           = $specADCredential }
+            # AD scope: prefer the dedicated AD tab list (per-row Server/Forest/CredProfile).
+            # Falls back to the legacy specialized-scope single-forest field for backwards
+            # compatibility when the AD tab is empty.
+            if ($adForests -and @($adForests).Count -gt 0) {
+                $resolvedAD = New-Object System.Collections.ArrayList
+                foreach ($adr in @($adForests)) {
+                    $cred = $null
+                    if ($adr.CredProfile) {
+                        try { $cred = Get-AGCredentialAsPSCredential -Name $adr.CredProfile } catch { }
+                    }
+                    [void]$resolvedAD.Add(@{ Server = $adr.Server; Forest = $adr.Forest; Credential = $cred })
+                }
+                $Global:ADForests = $resolvedAD.ToArray()
+                # Legacy single-forest globals = first row, so unmodified plugins keep working
+                $first = $resolvedAD[0]
+                $Global:ADForestFqdn = if ($first.Forest) { $first.Forest } else { $first.Server }
+                $Global:ADServerFqdn = $first.Server
+                if ($first.Credential) { $Global:ADCredential = $first.Credential }
+            } elseif ($specADForest) {
+                $Global:ADForestFqdn = $specADForest
+                $Global:ADServerFqdn = $specADForest
+                if ($specADCredential) { $Global:ADCredential = $specADCredential }
+                $Global:ADForests = @(@{ Server = $specADForest; Forest = $specADForest; Credential = $specADCredential })
+            }
             if ($specAVPackagingVms   -and @($specAVPackagingVms).Count -gt 0)  { $Global:AVPackagingVmHints     = @($specAVPackagingVms) }
             if ($specMFAExternalCheck) { $Global:MFAExternalProbe = $true }
             # Manually-picked gold image VM names (operator-supplied via the
