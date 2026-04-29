@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.32'
+$Script:HealthCheckVersion = '0.93.33'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -859,10 +859,10 @@ $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 #     the bottom of the screen with no way to reach Run / Open Last Report)
 #   - cap the initial size to 90% of the working area so we never spawn the
 #     form bigger than the actual screen
-$form.Size = New-Object System.Drawing.Size(900, 920)
-$form.MinimumSize = New-Object System.Drawing.Size(720, 620)
+$form.Size = New-Object System.Drawing.Size(900, 950)
+$form.MinimumSize = New-Object System.Drawing.Size(720, 640)
 $form.AutoScroll = $true
-$form.AutoScrollMinSize = New-Object System.Drawing.Size(880, 900)
+$form.AutoScrollMinSize = New-Object System.Drawing.Size(880, 930)
 # Compute the target monitor's working area, clamp the form size to fit,
 # then explicitly position the form fully on-screen. CenterScreen alone
 # is not enough on some multi-monitor / RDP / Teams-shared setups where
@@ -872,9 +872,9 @@ try {
     $maxW = [int]($workArea.Width  * 0.95)
     $maxH = [int]($workArea.Height * 0.95)
     $newW = [Math]::Min(900, $maxW)
-    $newH = [Math]::Min(920, $maxH)
+    $newH = [Math]::Min(950, $maxH)
     if ($newW -lt 720) { $newW = 720 }
-    if ($newH -lt 620) { $newH = 620 }
+    if ($newH -lt 640) { $newH = 640 }
     $form.Size = New-Object System.Drawing.Size($newW, $newH)
     # Manual position - center on this monitor, then clamp so neither
     # edge falls past the working area.
@@ -1514,11 +1514,22 @@ $grpPlug = New-Object System.Windows.Forms.GroupBox
 $grpPlug.Text = ' Plugins (uncheck to skip) '
 $grpPlug.Location = New-Object System.Drawing.Point(12, 430)
 $grpPlug.Size     = New-Object System.Drawing.Size(870, 188)
+# Plugin tree group is the resize-absorber: when the user makes the window
+# taller it grows downward, when wider it grows rightward. Everything below
+# it is bottom-anchored, so the tree stretches into the freed space.
+$grpPlug.Anchor   = [System.Windows.Forms.AnchorStyles]::Top    -bor `
+                    [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                    [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                    [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($grpPlug)
 
 $tree = New-Object System.Windows.Forms.TreeView
 $tree.Location = New-Object System.Drawing.Point(12, 22)
 $tree.Size     = New-Object System.Drawing.Size(846, 156)
+$tree.Anchor   = [System.Windows.Forms.AnchorStyles]::Top    -bor `
+                 [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                 [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                 [System.Windows.Forms.AnchorStyles]::Right
 $tree.CheckBoxes = $true
 $grpPlug.Controls.Add($tree)
 $pluginRoot = Join-Path $root 'Plugins'
@@ -1551,6 +1562,9 @@ $tree.Add_AfterCheck({
 $scopeRow = New-Object System.Windows.Forms.Panel
 $scopeRow.Location = New-Object System.Drawing.Point(12, 624)
 $scopeRow.Size     = New-Object System.Drawing.Size(870, 32)
+$scopeRow.Anchor   = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                     [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                     [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($scopeRow)
 
 $lblScope = New-Object System.Windows.Forms.Label
@@ -1593,10 +1607,12 @@ function New-ScopeButton($text, $x, $action) {
 }
 
 # A "Restart" button to re-show the starter dialog (= change scope).
+# Anchored Top|Right so it tracks the right edge when the scope row widens.
 $btnRestart = New-ScopeButton 'Change Scope...' 700 {
     $form.Close()
     Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath)
 }
+$btnRestart.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
 $scopeRow.Controls.Add($btnRestart)
 
 Update-ScopeLabel
@@ -1609,6 +1625,7 @@ $btnRun.Size     = New-Object System.Drawing.Size(160, 32)
 $btnRun.BackColor = [System.Drawing.Color]::FromArgb(10,61,98)
 $btnRun.ForeColor = [System.Drawing.Color]::White
 $btnRun.FlatStyle = 'Flat'
+$btnRun.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($btnRun)
 
 $btnOpen = New-Object System.Windows.Forms.Button
@@ -1616,12 +1633,14 @@ $btnOpen.Text = 'Open Last Report'
 $btnOpen.Location = New-Object System.Drawing.Point(180, 692)
 $btnOpen.Size     = New-Object System.Drawing.Size(140, 32)
 $btnOpen.Enabled = $false
+$btnOpen.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($btnOpen)
 
 $btnClose = New-Object System.Windows.Forms.Button
 $btnClose.Text = 'Close'
 $btnClose.Location = New-Object System.Drawing.Point(802, 692)
 $btnClose.Size     = New-Object System.Drawing.Size(80, 32)
+$btnClose.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
 $btnClose.Add_Click({ $form.Close() })
 $form.Controls.Add($btnClose)
 
@@ -1633,6 +1652,7 @@ $btnImgCred = New-Object System.Windows.Forms.Button
 $btnImgCred.Text = 'Set Deep-Scan Creds...'
 $btnImgCred.Location = New-Object System.Drawing.Point(330, 692)
 $btnImgCred.Size     = New-Object System.Drawing.Size(170, 32)
+$btnImgCred.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnImgCred.Add_Click({
     # Click drops a context menu: pick profile, prompt manually, or open mgr.
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -1683,6 +1703,7 @@ $lblImgCred.Text = '(optional - enables in-guest gold image scan)'
 $lblImgCred.Location = New-Object System.Drawing.Point(508, 700)
 $lblImgCred.Size     = New-Object System.Drawing.Size(290, 18)
 $lblImgCred.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
+$lblImgCred.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $form.Controls.Add($lblImgCred)
 
 # ---- Specialized scopes (AD / MFA / Imprivata / DEM) --------------------
@@ -1705,6 +1726,7 @@ $btnSpec.Location = New-Object System.Drawing.Point(12, 732)
 $btnSpec.Size     = New-Object System.Drawing.Size(220, 28)
 $btnSpec.BackColor = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $btnSpec.FlatStyle = 'Flat'
+$btnSpec.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnSpec.Add_Click({
     # Build dialog
     $dlg = New-Object System.Windows.Forms.Form
@@ -1903,6 +1925,7 @@ $btnCreds.Location = New-Object System.Drawing.Point(414, 732)
 $btnCreds.Size     = New-Object System.Drawing.Size(170, 28)
 $btnCreds.BackColor = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $btnCreds.FlatStyle = 'Flat'
+$btnCreds.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnCreds.Add_Click({ Show-CredentialProfileDialog })
 $form.Controls.Add($btnCreds)
 
@@ -2549,6 +2572,7 @@ $btnGold.Location = New-Object System.Drawing.Point(238, 732)
 $btnGold.Size     = New-Object System.Drawing.Size(170, 28)
 $btnGold.BackColor = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $btnGold.FlatStyle = 'Flat'
+$btnGold.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnGold.Add_Click({
     # Allow Nutanix-only mode: at least one hypervisor backend must be filled.
     $hasVC   = ($cVC.Server.Text -and $cVC.User.Text -and $cVC.Pass.Text)
@@ -2570,16 +2594,23 @@ $btnAcctReq.Location = New-Object System.Drawing.Point(594, 732)
 $btnAcctReq.Size     = New-Object System.Drawing.Size(220, 28)
 $btnAcctReq.BackColor = [System.Drawing.Color]::FromArgb(230, 230, 230)
 $btnAcctReq.FlatStyle = 'Flat'
+$btnAcctReq.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnAcctReq.Add_Click({ Show-AuditAccountRequestDialog -RootPath $root })
 $form.Controls.Add($btnAcctReq)
 
 # Single combined help label on a row beneath all the action buttons.
+# Height of 36 px accommodates the natural text wrap at the default 870 px
+# width - text is too long for one line, and clipping it to one row caused
+# the second wrapped line to draw on top of the log frame below.
 $lblRow2 = New-Object System.Windows.Forms.Label
 $lblRow2.Text = 'Specialized = AD/MFA/Imprivata/DEM/AV-pkg/customer  |  Pick Gold Images = browse vCenter + select masters  |  Manage Credentials = save reusable named profiles  |  Account Request = generate per-platform email'
-$lblRow2.Location = New-Object System.Drawing.Point(12, 766)
-$lblRow2.Size     = New-Object System.Drawing.Size(870, 22)
+$lblRow2.Location = New-Object System.Drawing.Point(12, 764)
+$lblRow2.Size     = New-Object System.Drawing.Size(870, 36)
 $lblRow2.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
 $lblRow2.Font = New-Object System.Drawing.Font('Segoe UI', 8)
+$lblRow2.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                  [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                  [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lblRow2)
 
 function Show-GoldImagePicker {
@@ -2924,9 +2955,15 @@ function Show-GoldImagePicker {
 # user clicks Run, the disclaimer text is cleared and replaced by progress
 # logs (the red border stays so the section keeps a visual identity).
 $logFrame = New-Object System.Windows.Forms.Panel
-$logFrame.Location = New-Object System.Drawing.Point(12, 774)
-$logFrame.Size     = New-Object System.Drawing.Size(870, 90)
-$logFrame.Anchor   = 'Top,Bottom,Left,Right'
+# Sits below the help label (y=764, h=36 -> ends 800). 8 px gap.
+$logFrame.Location = New-Object System.Drawing.Point(12, 808)
+$logFrame.Size     = New-Object System.Drawing.Size(870, 100)
+# Bottom|Left|Right (NOT Top) - the log frame stays a fixed height anchored
+# to the bottom of the form. Vertical growth comes from the plugin tree
+# group (anchored Top|Bottom), which absorbs the extra space.
+$logFrame.Anchor   = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                     [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                     [System.Windows.Forms.AnchorStyles]::Right
 $logFrame.BackColor = [System.Drawing.Color]::FromArgb(192, 57, 43)   # red border
 $form.Controls.Add($logFrame)
 
@@ -2935,8 +2972,11 @@ $logBox.Multiline = $true; $logBox.ScrollBars = 'Vertical'; $logBox.ReadOnly = $
 $logBox.BorderStyle = 'None'
 $logBox.Font = New-Object System.Drawing.Font('Consolas', 9)
 $logBox.Location = New-Object System.Drawing.Point(2, 2)
-$logBox.Size     = New-Object System.Drawing.Size(866, 86)
-$logBox.Anchor = 'Top,Bottom,Left,Right'
+$logBox.Size     = New-Object System.Drawing.Size(866, 96)
+$logBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top    -bor `
+                 [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                 [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                 [System.Windows.Forms.AnchorStyles]::Right
 $logBox.BackColor = [System.Drawing.Color]::White
 $logFrame.Controls.Add($logBox)
 
