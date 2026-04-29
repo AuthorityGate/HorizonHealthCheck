@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.31'
+$Script:HealthCheckVersion = '0.93.32'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -273,7 +273,7 @@ function Show-StarterDialog {
 
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text          = 'Horizon HealthCheck - Welcome'
-    $dlg.Size          = New-Object System.Drawing.Size(720, 780)
+    $dlg.Size          = New-Object System.Drawing.Size(720, 820)
     $dlg.StartPosition = 'CenterScreen'
     $dlg.Font          = New-Object System.Drawing.Font('Segoe UI', 9)
     # Sizable + AutoScroll: jumpbox / RDP / 1366x768 users can drag-resize
@@ -286,7 +286,10 @@ function Show-StarterDialog {
     $dlg.MinimizeBox   = $true
     $dlg.MinimumSize   = New-Object System.Drawing.Size(600, 540)
     $dlg.AutoScroll    = $true
-    $dlg.AutoScrollMinSize = New-Object System.Drawing.Size(700, 760)
+    # Min content height = button row bottom (y=738) + padding. Default form
+    # height (820 - ~30 title = 790 client) is 40 px taller, so no scrollbar
+    # appears by default; only shows if the user shrinks the dialog.
+    $dlg.AutoScrollMinSize = New-Object System.Drawing.Size(700, 750)
     $dlg.ShowInTaskbar = $true
     # Cap initial size to 95% of working area so the dialog never spawns
     # taller than the screen on a 1366x768 jumpbox.
@@ -295,7 +298,7 @@ function Show-StarterDialog {
         $maxW = [int]($workArea.Width  * 0.95)
         $maxH = [int]($workArea.Height * 0.95)
         if ($dlg.Size.Height -gt $maxH -or $dlg.Size.Width -gt $maxW) {
-            $dlg.Size = New-Object System.Drawing.Size(([Math]::Min(720,$maxW)), ([Math]::Min(780,$maxH)))
+            $dlg.Size = New-Object System.Drawing.Size(([Math]::Min(720,$maxW)), ([Math]::Min(820,$maxH)))
         }
     } catch { }
 
@@ -539,24 +542,31 @@ By clicking 'Continue' below, you confirm:
     $grpTgt.Controls.Add($cbUEM)
 
     # ---- Buttons
+    # Buttons sit on a single row directly below the target group box (which
+    # ends at y=688). Both right-aligned, anchored Bottom|Right so resizing
+    # the dialog keeps them visible. Form height (780) leaves ~50px breathing
+    # room below the row at y=702 so the buttons are never clipped.
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = 'Cancel'
+    $btnCancel.Location = New-Object System.Drawing.Point(420, 702)
+    $btnCancel.Size     = New-Object System.Drawing.Size(108, 36)
+    $btnCancel.DialogResult = 'Cancel'
+    $btnCancel.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+    $dlg.Controls.Add($btnCancel)
+    $dlg.CancelButton = $btnCancel
+
     $btnContinue = New-Object System.Windows.Forms.Button
     $btnContinue.Text = 'Continue'
-    $btnContinue.Location = New-Object System.Drawing.Point(534, 712)
+    $btnContinue.Location = New-Object System.Drawing.Point(540, 702)
     $btnContinue.Size     = New-Object System.Drawing.Size(146, 36)
     $btnContinue.BackColor = [System.Drawing.Color]::FromArgb(10, 61, 98)
     $btnContinue.ForeColor = [System.Drawing.Color]::White
     $btnContinue.FlatStyle = 'Flat'
     $btnContinue.Enabled = $false
     $btnContinue.DialogResult = 'OK'
+    $btnContinue.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
     $dlg.Controls.Add($btnContinue)
     $dlg.AcceptButton = $btnContinue
-
-    $btnCancel = New-Object System.Windows.Forms.Button
-    $btnCancel.Text = 'Cancel'
-    $btnCancel.Location = New-Object System.Drawing.Point(420, 670)
-    $btnCancel.Size     = New-Object System.Drawing.Size(108, 36)
-    $btnCancel.DialogResult = 'Cancel'
-    $dlg.Controls.Add($btnCancel)
     $dlg.CancelButton = $btnCancel
 
     # Continue gated on: license + PSO + at least one target
@@ -1503,12 +1513,12 @@ $grpOut.Controls.Add($tbAuthor)
 $grpPlug = New-Object System.Windows.Forms.GroupBox
 $grpPlug.Text = ' Plugins (uncheck to skip) '
 $grpPlug.Location = New-Object System.Drawing.Point(12, 430)
-$grpPlug.Size     = New-Object System.Drawing.Size(870, 220)
+$grpPlug.Size     = New-Object System.Drawing.Size(870, 188)
 $form.Controls.Add($grpPlug)
 
 $tree = New-Object System.Windows.Forms.TreeView
 $tree.Location = New-Object System.Drawing.Point(12, 22)
-$tree.Size     = New-Object System.Drawing.Size(846, 185)
+$tree.Size     = New-Object System.Drawing.Size(846, 156)
 $tree.CheckBoxes = $true
 $grpPlug.Controls.Add($tree)
 $pluginRoot = Join-Path $root 'Plugins'
@@ -1537,8 +1547,9 @@ $tree.Add_AfterCheck({
 })
 
 # ---- Scope row: live indicator + quick-select buttons --------------------
+# Sits between plugin tree (ends y=618) and progress bar row (y=662).
 $scopeRow = New-Object System.Windows.Forms.Panel
-$scopeRow.Location = New-Object System.Drawing.Point(12, 654)
+$scopeRow.Location = New-Object System.Drawing.Point(12, 624)
 $scopeRow.Size     = New-Object System.Drawing.Size(870, 32)
 $form.Controls.Add($scopeRow)
 
@@ -2942,14 +2953,20 @@ Reports are written to the Output folder. Nothing is uploaded.
 "@
 
 $progress = New-Object System.Windows.Forms.ProgressBar
-$progress.Location = New-Object System.Drawing.Point(330, 696)
-$progress.Size     = New-Object System.Drawing.Size(460, 24)
+# Progress bar gets its own dedicated full-width row at y=664, between the
+# scope row (y=620-650) and the top button row (y=692). Old layout placed
+# the progress bar at (330, 696) with width 460 - it sat ON TOP of the
+# 'Set Deep-Scan Creds...' button at (330, 692, 170, 32) and the optional
+# help label at (508, 700), making one or the other unreachable depending
+# on z-order. Putting the progress bar in its own row removes the overlap
+# entirely so no BringToFront / Visible toggling is needed.
+$progress.Location = New-Object System.Drawing.Point(12, 664)
+$progress.Size     = New-Object System.Drawing.Size(870, 22)
 $progress.Style    = 'Continuous'
+$progress.Anchor   = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                     [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                     [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($progress)
-# Progress bar must paint on top of the help label that lives on the same
-# row. Without BringToFront, WinForms draws controls in add-order and the
-# label (added earlier) ended up in front, hiding scan progress.
-$progress.BringToFront()
 
 $sync = [hashtable]::Synchronized(@{
     Log = New-Object System.Collections.ArrayList
@@ -2968,7 +2985,6 @@ $logTimer.Add_Tick({
     if ($sync.Done) {
         $logTimer.Stop()
         $btnRun.Enabled = $true; $btnRun.Text = 'Run Health Check'
-        if ($lblImgCred) { $lblImgCred.Visible = $true }
         if ($sync.Error) {
             [System.Windows.Forms.MessageBox]::Show("Run failed:`n`n$($sync.Error)", 'Horizon HealthCheck', 'OK', 'Error') | Out-Null
         } else {
@@ -3189,9 +3205,6 @@ $btnRun.Add_Click({
     $sync.Done = $false; $sync.Error = $null; $sync.LastReport = $null
     $sync.PluginsTotal = 0; $sync.PluginsDone = 0
     $logBox.Clear(); $progress.Value = 0
-    # Hide the Deep-Scan-Creds help label during the scan so the progress
-    # bar (same row) is unobstructed. The cleanup tick restores it.
-    if ($lblImgCred) { $lblImgCred.Visible = $false }
     $btnRun.Enabled = $false; $btnRun.Text = 'Running...'; $btnOpen.Enabled = $false
     $logTimer.Start()
 
