@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.52'
+$Script:HealthCheckVersion = '0.93.53'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1734,6 +1734,107 @@ $tree.Add_AfterCheck({
         foreach ($c in $e.Node.Nodes) { $c.Checked = $e.Node.Checked }
     }
 })
+
+# ---- Auto-uncheck plugin categories that aren't in scope -----------------
+# Each category folder is mapped to one or more scope-toggle checkboxes
+# (Horizon, vCenter, App Volumes, etc.). When ALL of a category's required
+# scopes are unchecked, that category's plugins are auto-unchecked AND
+# disabled in the tree so the user can see "this is out of scope, not just
+# turned off." When a scope flips back on, plugins are restored unless the
+# user had them in their persistent disabled-set.
+#
+# Categories NOT in this map are always-on (00 Initialize, 99 Disconnect,
+# AD/DNS/DHCP/MFA/CA/Imprivata cross-cutting plugins). The user can still
+# manually uncheck them.
+$Script:CategoryScopeMap = @{
+    '10 Connection Servers'           = @('HV')
+    '20 Cloud Pod Architecture'       = @('HV')
+    '30 Desktop Pools'                = @('HV')
+    '40 RDS Farms'                    = @('HV')
+    '50 Machines'                     = @('HV')
+    '60 Sessions'                     = @('HV')
+    '70 Events'                       = @('HV')
+    '80 Licensing and Certificates'   = @('HV')
+    '90 Gateways'                     = @('HV','UAG')
+    '93 Enrollment Server'            = @('HV')
+    '91 App Volumes'                  = @('AV')
+    '92 Dynamic Environment Manager'  = @('DEM')
+    '94 NSX'                          = @('NSX')
+    '95 vSphere Backing Infra'        = @('VC')
+    '96 vSphere Standalone'           = @('VC')
+    '97 vSphere for Horizon'          = @('VC')
+    '97 Nutanix Prism'                = @('NTNX')
+    '98 vSAN'                         = @('VC')
+    '99 vSphere Lifecycle'            = @('VC')
+    'A0 Hardware'                     = @('VC')
+    'B1 Identity Manager'             = @('VIDM')
+    'B5 Workspace ONE Access'         = @('VIDM')
+    'B6 Workspace ONE UEM'            = @('UEM')
+    'B7 Backup and DR'                = @('VC')
+    'B8 FSLogix'                      = @('HV')
+    'C0 SQL Server Health'            = @('VC')
+    'C1 Identity Federation'          = @('VIDM')
+    'C2 Hardening Guide'              = @('VC')
+    'C3 License Lifecycle'            = @('HV')
+}
+
+function Global:Update-PluginScope {
+    # Snapshot which scopes are currently on, then walk every category
+    # node and toggle its Checked + Enabled state to match.
+    $scopeOn = @{
+        HV   = $cHV.Use.Checked
+        VC   = $cVC.Use.Checked
+        AV   = $cAV.Use.Checked
+        UAG  = $cUAG.Use.Checked
+        NSX  = $cNSX.Use.Checked
+        DEM  = $cDEM.Use.Checked
+        NTNX = $cNTNX.Use.Checked
+        VIDM = $cVIDM.Use.Checked
+        UEM  = $cUEM.Use.Checked
+    }
+    foreach ($catNode in $tree.Nodes) {
+        if ($catNode.Tag -notlike 'CATEGORY:*') { continue }
+        $catName = $catNode.Tag.Substring(9)
+        if (-not $Script:CategoryScopeMap.ContainsKey($catName)) {
+            # Always-on category - leave as-is
+            $catNode.ForeColor = [System.Drawing.SystemColors]::WindowText
+            continue
+        }
+        $reqScopes = @($Script:CategoryScopeMap[$catName])
+        $anyOn = $false
+        foreach ($sk in $reqScopes) { if ($scopeOn[$sk]) { $anyOn = $true; break } }
+        if (-not $anyOn) {
+            # Out of scope - hard-uncheck and grey out
+            foreach ($plug in $catNode.Nodes) {
+                $plug.Checked = $false
+                $plug.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+            }
+            $catNode.Checked = $false
+            $catNode.ForeColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+        } else {
+            # In scope - restore default-color and tick anything not in
+            # the persistent disabled-set
+            $allOn = $true
+            foreach ($plug in $catNode.Nodes) {
+                $plug.ForeColor = [System.Drawing.SystemColors]::WindowText
+                $rel = [string]$plug.Tag
+                $inDisabled = ($rel -and $disabledSet.ContainsKey($rel))
+                $plug.Checked = -not $inDisabled
+                if ($inDisabled) { $allOn = $false }
+            }
+            $catNode.Checked = $allOn
+            $catNode.ForeColor = [System.Drawing.SystemColors]::WindowText
+        }
+    }
+}
+
+# Wire the scope-checkbox CheckedChanged events. Capture-by-closure so the
+# handlers find the right $tree + map at fire time.
+foreach ($cb in @($cHV.Use, $cVC.Use, $cAV.Use, $cUAG.Use, $cNSX.Use, $cDEM.Use, $cNTNX.Use, $cVIDM.Use, $cUEM.Use)) {
+    $cb.Add_CheckedChanged({ Update-PluginScope }.GetNewClosure())
+}
+# Initial sync so the tree reflects the starter dialog's scope picks.
+Update-PluginScope
 
 # ---- Scope row: live indicator + quick-select buttons --------------------
 # Sits between plugin tree (ends y=618) and progress bar row (y=662).
