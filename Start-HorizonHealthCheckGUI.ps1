@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.30'
+$Script:HealthCheckVersion = '0.93.31'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -459,12 +459,11 @@ By clicking 'Continue' below, you confirm:
     # Group height accommodates 9 checkboxes (Horizon, vCenter, Nutanix,
     # AppVol, UAG, NSX, DEM, vIDM, UEM) at 24 px stride starting at y=46.
     # Last checkbox (UEM) tops at y=238 + 22 = 260 + 16 padding = 276 floor.
-    # AutoScroll on so smaller screens / future additions get a scrollbar
-    # rather than clipping the bottom checkbox.
+    # NOTE: GroupBox inherits from Control, not ScrollableControl, so it has
+    # no AutoScroll property. The parent dialog already has AutoScroll=$true,
+    # so when the window is shorter than the GroupBox the FORM scrolls.
     $grpTgt.Size     = New-Object System.Drawing.Size(660, 280)
     $grpTgt.Font     = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-    $grpTgt.AutoScroll = $true
-    $grpTgt.AutoScrollMinSize = New-Object System.Drawing.Size(640, 270)
     $dlg.Controls.Add($grpTgt)
 
     $hint = New-Object System.Windows.Forms.Label
