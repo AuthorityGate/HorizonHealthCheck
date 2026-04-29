@@ -424,9 +424,33 @@ function Invoke-HVRest {
         }
         try {
             $resp = Invoke-RestMethod @args
-            [void]$Script:HVPathProbe.Add([pscustomobject]@{
-                OriginalPath = $originalPath; TriedPath = $Path; Status = 200; Result = 'OK'
-            })
+            # Only record one probe row per call (offset==0). Pagination
+            # otherwise produces N rows of "OK" for the same OriginalPath.
+            # Capture payload field count of the first record so a 200 with
+            # a stub-only response (e.g. Horizon 8.6 /v1/monitor/connection-
+            # servers returns just {id, jwt_info, jwt_support}) is visually
+            # distinguishable from a 200 with full metadata.
+            if ($offset -eq 0) {
+                $fieldCount = 0
+                $sampleKeys = ''
+                $first = if ($resp -is [System.Array]) { @($resp)[0] } else { $resp }
+                if ($first -and $first.PSObject -and $first.PSObject.Properties) {
+                    $names = @($first.PSObject.Properties | ForEach-Object { $_.Name })
+                    $fieldCount = $names.Count
+                    if ($fieldCount -gt 0) {
+                        $sampleKeys = ($names | Select-Object -First 6) -join ','
+                    }
+                }
+                $stubFlag = ($fieldCount -gt 0 -and $fieldCount -lt 5)
+                [void]$Script:HVPathProbe.Add([pscustomobject]@{
+                    OriginalPath = $originalPath
+                    TriedPath    = $Path
+                    Status       = 200
+                    Result       = if ($stubFlag) { "OK (stub-only payload: $fieldCount fields)" } else { 'OK' }
+                    Fields       = $fieldCount
+                    SampleKeys   = $sampleKeys
+                })
+            }
         } catch {
             $code = Get-HVErrorStatusCode -ErrorRecord $_
             if ($code -eq 401) {
@@ -458,10 +482,10 @@ function Invoke-HVRest {
                 # and is cached in $Script:HVPathRemap for the rest of the run.
                 $alternates = @()
                 $tail = $null
-                if ($Path -match '^/v(\d)/(?:monitor|inventory|config|external)/(.+)$') {
+                if ($Path -match '^/v(\d)/(?:monitor|inventory|config|external|entitlements)/(.+)$') {
                     # /v1/monitor/X form -> swap or strip the modifier
                     $ver = $Matches[1]; $tail = $Matches[2]
-                } elseif ($Path -match '^/(?:monitor|inventory|config|external)/v(\d)/(.+)$') {
+                } elseif ($Path -match '^/(?:monitor|inventory|config|external|entitlements)/v(\d)/(.+)$') {
                     # /monitor/v1/X form -> swap or strip the modifier
                     $ver = $Matches[1]; $tail = $Matches[2]
                 } elseif ($Path -match '^/v(\d)/(.+)$') {
@@ -473,7 +497,11 @@ function Invoke-HVRest {
                     if ($ver -ne '1') { $vers += '1' }
                     if ($ver -ne '2') { $vers += '2' }
                     foreach ($v in $vers) {
-                        foreach ($mod in @('monitor','inventory','config','external')) {
+                        # entitlements is a real Horizon 8.6 namespace - try it
+                        # alongside the historical monitor/inventory/config/external
+                        # set so a /v1/entitlements/X 404 falls through to the
+                        # newer /v2/X or /entitlements/v1/X form automatically.
+                        foreach ($mod in @('monitor','inventory','config','external','entitlements')) {
                             $alternates += "/v$v/$mod/$tail"
                             $alternates += "/$mod/v$v/$tail"
                         }
