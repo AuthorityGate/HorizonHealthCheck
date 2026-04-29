@@ -14,7 +14,7 @@ $Recommendation = "All DCs in a domain SHOULD run the same OS major version (Ser
 if (-not (Test-Path Variable:Global:ADForestFqdn) -or -not $Global:ADForestFqdn) { return }
 try { Import-Module ActiveDirectory -ErrorAction Stop } catch { return }
 
-$adArgs = @{ Server = $Global:ADForestFqdn }
+$adArgs = @{ Server = $(if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }) }
 if (Test-Path Variable:Global:ADCredential) { $adArgs.Credential = $Global:ADCredential }
 
 try {

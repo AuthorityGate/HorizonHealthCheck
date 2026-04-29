@@ -27,7 +27,7 @@ if (-not $adAvailable) {
 # the AD module's way to say "ignore the runner's local context, query
 # THIS host instead". We pass an optional credential too so the runner
 # doesn't have to be domain-joined.
-$adArgs = @{ Server = $Global:ADForestFqdn; ErrorAction = 'Stop' }
+$adArgs = @{ Server = $(if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }); ErrorAction = 'Stop' }
 if (Test-Path Variable:Global:ADCredential) { $adArgs.Credential = $Global:ADCredential }
 
 try {

@@ -41,7 +41,7 @@ if (-not $adAvailable) {
 # All AD cmdlets get -Server pointing at the operator-supplied target so we
 # don't fall back to the runner's local domain context. Optional credential
 # is honored when set in the GUI.
-$adArgs = @{ Server = $Global:ADForestFqdn }
+$adArgs = @{ Server = $(if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }) }
 if (Test-Path Variable:Global:ADCredential) { $adArgs.Credential = $Global:ADCredential }
 
 try {

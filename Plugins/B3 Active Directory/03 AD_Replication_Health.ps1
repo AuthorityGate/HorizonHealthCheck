@@ -23,7 +23,7 @@ if (-not $adAvailable) {
     return
 }
 
-$adArgs = @{ Server = $Global:ADForestFqdn }
+$adArgs = @{ Server = $(if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }) }
 if (Test-Path Variable:Global:ADCredential) { $adArgs.Credential = $Global:ADCredential }
 
 try {

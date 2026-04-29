@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.62'
+$Script:HealthCheckVersion = '0.93.63'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1630,8 +1630,18 @@ foreach ($e in @($state.ADForests)) {
 $cAD.BtnAdd.Add_Click({
     $dc = Read-NameDialog -Title 'Add DC / DNS server' -Prompt "Reachable DC or DNS server FQDN (e.g. 'dc01.example.local'):" -DefaultValue ''
     if (-not $dc) { return }
+    $dc = $dc.Trim()
+    # Validate FQDN form - a bare short hostname like 'DOGWOOD01' won't be
+    # DNS-resolvable and AD Web Services connections will fail. We still
+    # let the user proceed but warn them clearly.
+    if ($dc -notmatch '\.') {
+        $ans = [System.Windows.Forms.MessageBox]::Show(
+            "'$dc' looks like a short hostname (no domain suffix). AD Web Services connections need a fully-qualified name like '$dc.example.local' or just 'example.local'. Add anyway?",
+            'Possible incomplete FQDN', 'YesNo', 'Warning')
+        if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    }
     $f = Read-NameDialog -Title 'Forest FQDN (optional)' -Prompt "Forest FQDN (e.g. 'example.local'). Leave blank to auto-discover from the DC above:" -DefaultValue ''
-    [void]$cAD.Grid.Rows.Add($dc.Trim(), ($(if ($f) { $f.Trim() } else { '' })), '', '')
+    [void]$cAD.Grid.Rows.Add($dc, ($(if ($f) { $f.Trim() } else { '' })), '', '')
     Update-ADStatusLabel
 })
 
@@ -4541,19 +4551,40 @@ $btnRun.Add_Click({
             # Falls back to the legacy specialized-scope single-forest field for backwards
             # compatibility when the AD tab is empty.
             if ($adForests -and @($adForests).Count -gt 0) {
+                # Try to load the AD module up front so we can auto-discover
+                # forest FQDN from server when the operator left Forest blank.
+                $adModuleAvailable = $false
+                try { Import-Module ActiveDirectory -ErrorAction Stop -Global; $adModuleAvailable = $true } catch { }
+
                 $resolvedAD = New-Object System.Collections.ArrayList
                 foreach ($adr in @($adForests)) {
                     $cred = $null
                     if ($adr.CredProfile) {
                         try { $cred = Get-AGCredentialAsPSCredential -Name $adr.CredProfile } catch { }
                     }
-                    [void]$resolvedAD.Add(@{ Server = $adr.Server; Forest = $adr.Forest; Credential = $cred })
+                    $serverIn = [string]$adr.Server
+                    $forestIn = [string]$adr.Forest
+                    # Auto-discover forest from the DC if the operator left it blank.
+                    if (-not $forestIn -and $adModuleAvailable -and $serverIn) {
+                        try {
+                            $domArgs = @{ Server = $serverIn; ErrorAction = 'Stop' }
+                            if ($cred) { $domArgs.Credential = $cred }
+                            $disc = Get-ADDomain @domArgs
+                            if ($disc -and $disc.Forest) { $forestIn = [string]$disc.Forest }
+                        } catch { }
+                    }
+                    [void]$resolvedAD.Add(@{ Server = $serverIn; Forest = $forestIn; Credential = $cred })
                 }
                 $Global:ADForests = $resolvedAD.ToArray()
-                # Legacy single-forest globals = first row, so unmodified plugins keep working
+                # Legacy single-forest globals = first row's discovered values, so unmodified
+                # plugins keep working. ADServerFqdn = the DC (used for -Server). ADForestFqdn
+                # = the forest identity (used for Get-ADForest -Identity AND legacy plugins
+                # that still pass it as -Server). When forest is unknown after auto-discovery,
+                # fall back to the server FQDN; that works if the user typed the FQDN form
+                # (DC FQDN like dc01.example.local) but fails for short hostnames.
                 $first = $resolvedAD[0]
-                $Global:ADForestFqdn = if ($first.Forest) { $first.Forest } else { $first.Server }
                 $Global:ADServerFqdn = $first.Server
+                $Global:ADForestFqdn = if ($first.Forest) { $first.Forest } else { $first.Server }
                 if ($first.Credential) { $Global:ADCredential = $first.Credential }
             } elseif ($specADForest) {
                 $Global:ADForestFqdn = $specADForest
