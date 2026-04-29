@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.42'
+$Script:HealthCheckVersion = '0.93.43'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -778,9 +778,19 @@ function New-PanelControls($parent, $hasUserDomain=$true) {
     }
     $parent.Controls.Add($ctrls.SkipCert)
 
+    # Test button: top-right corner of the panel, next to the 'Connect to ...'
+    # checkbox. This row is always free regardless of which tab adds extra
+    # fields below (Tenant API key on UEM, domain on Horizon, port on UAG,
+    # Packaging VMs on AppVol). Previously placed at (326, 168) and crashed
+    # into the Tenant-API-key textbox on the UEM tab and similar locations
+    # on other extended tabs.
     $ctrls.Test = New-Object System.Windows.Forms.Button
     $ctrls.Test.Text = 'Test'
-    $ctrls.Test.Location = New-Object System.Drawing.Point(326, 168); $ctrls.Test.Size = New-Object System.Drawing.Size(74, 24)
+    $ctrls.Test.Location = New-Object System.Drawing.Point(508, 10)
+    $ctrls.Test.Size     = New-Object System.Drawing.Size(80, 26)
+    $ctrls.Test.BackColor = [System.Drawing.Color]::FromArgb(10, 61, 98)
+    $ctrls.Test.ForeColor = [System.Drawing.Color]::White
+    $ctrls.Test.FlatStyle = 'Flat'
     $parent.Controls.Add($ctrls.Test)
 
     $ctrls
