@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.49'
+$Script:HealthCheckVersion = '0.93.50'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3312,20 +3312,37 @@ $sync = [hashtable]::Synchronized(@{
 
 $logTimer = New-Object System.Windows.Forms.Timer
 $logTimer.Interval = 200
+# Wrap every tick body in try/catch. Ticks can fire after the form is
+# closing or after one of the referenced controls / sync members has been
+# disposed/null. Without this, a single null-ref throws a JIT pop-up at
+# the user instead of being silently swallowed.
 $logTimer.Add_Tick({
-    while ($sync.Log.Count -gt 0) { $line = $sync.Log[0]; $sync.Log.RemoveAt(0); $logBox.AppendText($line + "`r`n") }
-    if ($sync.PluginsTotal -gt 0) {
-        $progress.Maximum = $sync.PluginsTotal
-        $progress.Value   = [Math]::Min($sync.PluginsDone, $progress.Maximum)
-    }
-    if ($sync.Done) {
-        $logTimer.Stop()
-        $btnRun.Enabled = $true; $btnRun.Text = 'Run Health Check'
-        if ($sync.Error) {
-            [System.Windows.Forms.MessageBox]::Show("Run failed:`n`n$($sync.Error)", 'Horizon HealthCheck', 'OK', 'Error') | Out-Null
-        } else {
-            $btnOpen.Enabled = [bool]$sync.LastReport
+    try {
+        if (-not $sync) { return }
+        if ($sync.Log) {
+            while ($sync.Log.Count -gt 0) {
+                $line = $sync.Log[0]
+                $sync.Log.RemoveAt(0)
+                if ($logBox -and -not $logBox.IsDisposed) { $logBox.AppendText($line + "`r`n") }
+            }
         }
+        if ($sync.PluginsTotal -gt 0 -and $progress -and -not $progress.IsDisposed) {
+            $progress.Maximum = $sync.PluginsTotal
+            $progress.Value   = [Math]::Min($sync.PluginsDone, $progress.Maximum)
+        }
+        if ($sync.Done) {
+            try { $logTimer.Stop() } catch { }
+            if ($btnRun -and -not $btnRun.IsDisposed) {
+                $btnRun.Enabled = $true; $btnRun.Text = 'Run Health Check'
+            }
+            if ($sync.Error) {
+                [System.Windows.Forms.MessageBox]::Show("Run failed:`n`n$($sync.Error)", 'Horizon HealthCheck', 'OK', 'Error') | Out-Null
+            } elseif ($btnOpen -and -not $btnOpen.IsDisposed) {
+                $btnOpen.Enabled = [bool]$sync.LastReport
+            }
+        }
+    } catch {
+        try { Write-Host "[!] logTimer tick swallowed: $($_.Exception.Message)" -ForegroundColor DarkYellow } catch { }
     }
 })
 
@@ -4473,6 +4490,53 @@ $btnRun.Add_Click({
                 ImageScanTier = if ($imageScanCred) { 'Tier2' } else { 'Tier1' }
                 ConnectedBackends = $connected
                 Results = $results.ToArray() | ForEach-Object {
+                    # Scrub Details rows of non-primitive property values
+                    # (PowerCLI ViewBase, COM, embedded .NET objects).
+                    # ConvertTo-Json croaks with 'An item with the same key
+                    # has already been added. Key: LinkedView' when a row
+                    # holds a ViewBase reference whose property names
+                    # collide case-insensitively (LinkedView / linkedView).
+                    # Replace any non-trivial value with its ToString()
+                    # representation so the row is JSON-safe.
+                    $cleanedDetails = @()
+                    if ($_.Details) {
+                        foreach ($row in @($_.Details)) {
+                            if ($null -eq $row) { continue }
+                            if ($row -is [pscustomobject] -or $row -is [psobject]) {
+                                $newRow = [ordered]@{}
+                                foreach ($prop in $row.PSObject.Properties) {
+                                    $val = $prop.Value
+                                    # Primitives, strings, datetimes, bools,
+                                    # numerics, and arrays-of-primitives serialize fine.
+                                    if ($null -eq $val) { $newRow[$prop.Name] = $null; continue }
+                                    if ($val -is [string] -or $val -is [bool] -or $val -is [int] -or
+                                        $val -is [long] -or $val -is [double] -or $val -is [decimal] -or
+                                        $val -is [datetime] -or $val -is [byte] -or $val -is [char]) {
+                                        $newRow[$prop.Name] = $val
+                                        continue
+                                    }
+                                    if ($val -is [System.Collections.IEnumerable] -and -not ($val -is [string])) {
+                                        # Convert each entry to string to avoid
+                                        # surfacing ViewBase elements
+                                        $newRow[$prop.Name] = @($val | ForEach-Object {
+                                            if ($null -eq $_) { '' }
+                                            elseif ($_ -is [string] -or $_ -is [int] -or $_ -is [bool] -or $_ -is [datetime]) { $_ }
+                                            else { try { "$_" } catch { '(unprintable)' } }
+                                        })
+                                        continue
+                                    }
+                                    # Anything else (PowerCLI views, COM objects,
+                                    # custom .NET): coerce to string.
+                                    try { $newRow[$prop.Name] = "$val" } catch { $newRow[$prop.Name] = '(unprintable)' }
+                                }
+                                $cleanedDetails += [pscustomobject]$newRow
+                            } else {
+                                # Scalar Details entry - keep as-is if primitive, stringify otherwise
+                                if ($row -is [string] -or $row -is [bool] -or $row -is [int]) { $cleanedDetails += $row }
+                                else { try { $cleanedDetails += "$row" } catch { $cleanedDetails += '(unprintable)' } }
+                            }
+                        }
+                    }
                     [pscustomobject]@{
                         Plugin         = $_.Plugin
                         Title          = $_.Title
@@ -4484,7 +4548,7 @@ $btnRun.Add_Click({
                         PluginCategory = $_.PluginCategory
                         Severity       = $_.Severity
                         Recommendation = $_.Recommendation
-                        Details        = $_.Details
+                        Details        = $cleanedDetails
                         Duration       = $_.Duration
                         Error          = $_.Error
                     }
@@ -4607,10 +4671,13 @@ $btnRun.Add_Click({
     # falsy in non-strict mode, so the body would never execute and
     # telemetry submission would be silently skipped.
     $cleanup.Add_Tick({
-        if ($handle.IsCompleted) {
+        try {
+            if (-not $handle -or -not $handle.IsCompleted) { return }
             try { $ps.EndInvoke($handle) } catch { }
-            $ps.Dispose(); $rs.Dispose()
-            $cleanup.Stop(); $cleanup.Dispose()
+            try { $ps.Dispose() }      catch { }
+            try { $rs.Dispose() }      catch { }
+            try { $cleanup.Stop() }    catch { }
+            try { $cleanup.Dispose() } catch { }
 
             # ---- Post-run telemetry submission ----------------------------
             # The runspace populated $sync.TelemetryPayload; we POST it from
@@ -4618,6 +4685,8 @@ $btnRun.Add_Click({
             # is a function defined inside the runspace scope only; here we
             # write directly to $sync.Log which the progress timer drains
             # to the visible log textbox.
+            if (-not $sync) { return }
+            if (-not $sync.Log) { return }
             $tlState = if ($sync.TelemetryPayload) { 'PRESENT (' + (@($sync.TelemetryPayload.Keys)).Count + ' keys)' } else { 'NULL - assembly did not run' }
             [void]$sync.Log.Add("[*] Cleanup tick: TelemetryPayload $tlState")
             try {
@@ -4634,6 +4703,8 @@ $btnRun.Add_Click({
             } catch {
                 [void]$sync.Log.Add("[!] Telemetry submission threw: $($_.Exception.Message)")
             }
+        } catch {
+            try { Write-Host "[!] cleanup tick swallowed: $($_.Exception.Message)" -ForegroundColor DarkYellow } catch { }
         }
     }.GetNewClosure())
     $cleanup.Start()

@@ -56,7 +56,7 @@ foreach ($n in $parents) {
     $devs    = $cfg.Hardware.Device
     $os      = if ($vm.Guest -and $vm.Guest.OSFullName) { $vm.Guest.OSFullName } else { $cfg.GuestFullName }
     $isWin11 = ($os -match 'Windows 11')
-    $isLinux = ($os -match 'Linux|Ubuntu|RHEL|CentOS|SUSE|Photon')
+    $isLinuxGuest = ($os -match 'Linux|Ubuntu|RHEL|CentOS|SUSE|Photon')
     $cluster = if ($vm.VMHost -and $vm.VMHost.Parent) { $vm.VMHost.Parent.Name } else { '' }
 
     function _row {
