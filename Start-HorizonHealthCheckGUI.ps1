@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.44'
+$Script:HealthCheckVersion = '0.93.45'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -4098,11 +4098,17 @@ $btnRun.Add_Click({
             # Multi-pod execution model:
             #   - Plugins under a "Horizon scope" category (00 Initialize, 10,
             #     20, 30, 40, 50, 60, 70, 80, 90, B0/B1/B2 because those depend
-            #     on Horizon-side data) run ONCE PER POD. Set-HVActiveSession
-            #     points $Script:HVSession at each pod in turn; each pod gets
-            #     its own row in the report tagged Pod=<fqdn>.
+            #     on Horizon-side data) run ONCE per distinct POD. Multiple
+            #     Connection Servers in the same pod are LDAP/ADAM-replicated
+            #     and return identical data via the broker REST API, so
+            #     iterating across them produces duplicate rows with the
+            #     same content - which is what the user reported. We
+            #     detect distinct pods via Get-HVPod (CPA federation
+            #     listing) and only iterate when 2+ distinct pods exist.
             #   - All other plugins run ONCE (vCenter / AppVol / UAG / DEM /
-            #     DNS / DHCP / AD / Cleanup).
+            #     DNS / DHCP / AD / Cleanup). Multi-vCenter mode is handled
+            #     by PowerCLI's $DefaultVIServers (cmdlets fan out
+            #     automatically), not by an outer per-vCenter loop.
             $horizonScopedCategories = @(
                 '00 Initialize','10 Connection Servers','20 Cloud Pod Architecture',
                 '30 Desktop Pools','40 RDS Farms','50 Machines','60 Sessions',
@@ -4115,9 +4121,47 @@ $btnRun.Add_Click({
             # always iterates at least once.
             if ($null -eq $hvSessions)   { $hvSessions   = @{} }
             if ($null -eq $ntnxSessions) { $ntnxSessions = @{} }
-            $podKeys  = @()
-            if ($hvSessions.Count   -gt 0) { $podKeys  = @($hvSessions.Keys) }
-            if ($podKeys.Count -eq 0)      { $podKeys  = @($null) }
+
+            # CPA distinct-pod detection. If 2+ Horizon CS FQDNs were entered,
+            # they are USUALLY redundant replicas of one pod (typical multi-CS
+            # HA pair). Only iterate per-CS when distinct pods are reported
+            # by /v1/pods.
+            $podKeys = @()
+            if ($hvSessions.Count -gt 1) {
+                $distinctPods = @{}
+                foreach ($csKey in $hvSessions.Keys) {
+                    try {
+                        Set-HVActiveSession -Server $csKey | Out-Null
+                        $podList = @(Get-HVPod -ErrorAction SilentlyContinue)
+                        # Map this CS to its pod-id. CSes in the same pod
+                        # share a local-pod entry (the one with $true on
+                        # localPod or local_pod).
+                        $localPod = @($podList | Where-Object { $_.local_pod -eq $true -or $_.localPod -eq $true } | Select-Object -First 1)
+                        if (-not $localPod -or @($localPod).Count -eq 0) { $localPod = @($podList | Select-Object -First 1) }
+                        $podId = if ($localPod -and $localPod[0].id) { "$($localPod[0].id)" } else { 'unknown-pod' }
+                        if (-not $distinctPods.ContainsKey($podId)) {
+                            $distinctPods[$podId] = $csKey
+                        }
+                    } catch { }
+                }
+                # If we found 2+ distinct pods, iterate one CS per pod.
+                # Otherwise (all CSes in same pod), single iteration.
+                if ($distinctPods.Count -gt 1) {
+                    $podKeys = @($distinctPods.Values)
+                    Log "[i] Multi-pod (CPA) detected: $($distinctPods.Count) distinct pods. Plugins will iterate per pod."
+                } else {
+                    Log "[i] $($hvSessions.Count) Connection Server(s) detected, all in same pod. Plugins run once."
+                }
+                # Reset the module's active session to the first connected
+                # CS so subsequent plugins (including any single-pass ones)
+                # use a known-good session, not whichever one Set-HVActiveSession
+                # last pointed at during the detection loop above.
+                try { Set-HVActiveSession -Server (@($hvSessions.Keys)[0]) | Out-Null } catch { }
+            } elseif ($hvSessions.Count -eq 1) {
+                Log "[i] 1 Connection Server / single pod. Plugins run once."
+            }
+            if ($podKeys.Count -eq 0) { $podKeys = @($null) }
+
             $ntnxKeys = @()
             if ($ntnxSessions.Count -gt 0) { $ntnxKeys = @($ntnxSessions.Keys) }
             if ($ntnxKeys.Count -eq 0)     { $ntnxKeys = @($null) }
@@ -4130,7 +4174,7 @@ $btnRun.Add_Click({
                 # head of the relevant array (likely $null when no session).
                 $iterations = @($null)
                 if ($isHorizonPlugin -and $podKeys.Count -gt 1) { $iterations = $podKeys }
-                elseif ($isNutanixPlugin -and $ntnxKeys.Count -gt 0) { $iterations = $ntnxKeys }
+                elseif ($isNutanixPlugin -and $ntnxKeys.Count -gt 1) { $iterations = $ntnxKeys }
 
                 foreach ($podFqdn in $iterations) {
                     if ($isHorizonPlugin -and $podFqdn) {
