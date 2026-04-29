@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.47'
+$Script:HealthCheckVersion = '0.93.48'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -540,6 +540,17 @@ By clicking 'Continue' below, you confirm:
     $cbUEM.Size     = New-Object System.Drawing.Size(620, 22)
     $cbUEM.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
     $grpTgt.Controls.Add($cbUEM)
+
+    # Auto-discovery footnote: components that piggyback on the targets
+    # checked above and do NOT need their own input field. Spelling these
+    # out here saves the operator from looking for a non-existent tab.
+    $autoNote = New-Object System.Windows.Forms.Label
+    $autoNote.Text = 'Auto-discovered when Horizon is checked: Connection Servers (replicas), Cloud Pod Federation (CPA), Enrollment Servers (True SSO), Pods, Sites, vCenter registrations, RADIUS/SAML/Smart-Card authenticators, Helpdesk, Network Ranges, Access Groups, Persistent Disks, App Pools, Farms, Pools, Sessions. Auto-discovered when vCenter is checked: every cluster + host + datastore + alarm + event. Optional add-ons are configured via "Configure Specialized Scopes..." on the main form.'
+    $autoNote.Location = New-Object System.Drawing.Point(20, 250)
+    $autoNote.Size     = New-Object System.Drawing.Size(620, 30)
+    $autoNote.Font     = New-Object System.Drawing.Font('Segoe UI', 7, [System.Drawing.FontStyle]::Italic)
+    $autoNote.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+    $grpTgt.Controls.Add($autoNote)
 
     # ---- Buttons
     # Buttons sit on a single row directly below the target group box (which
