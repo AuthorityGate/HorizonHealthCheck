@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.48'
+$Script:HealthCheckVersion = '0.93.49'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3184,6 +3184,84 @@ $logFrame.Anchor   = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
                      [System.Windows.Forms.AnchorStyles]::Right
 $logFrame.BackColor = [System.Drawing.Color]::FromArgb(192, 57, 43)   # red border
 $form.Controls.Add($logFrame)
+
+# ---- Drag-resize splitter for the log frame ------------------------------
+# Thin gray strip directly above the log frame (just under the help label
+# at y=800). Click-and-drag UP grows the log, DOWN shrinks it. To keep
+# the bottom-anchored controls (scope row, progress, button rows, help
+# label) from being overlapped by an upward-growing log, every drag also
+# shifts those controls up by the same delta. The plugin tree group
+# shrinks/grows in lock-step. Cursor changes to HSplit (N/S arrows) on
+# hover so the affordance is obvious.
+$logSplit = New-Object System.Windows.Forms.Panel
+$logSplit.Size     = New-Object System.Drawing.Size(870, 6)
+$logSplit.Location = New-Object System.Drawing.Point(12, 802)
+$logSplit.Anchor   = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
+                     [System.Windows.Forms.AnchorStyles]::Left   -bor `
+                     [System.Windows.Forms.AnchorStyles]::Right
+$logSplit.BackColor = [System.Drawing.Color]::FromArgb(170, 170, 170)
+$logSplit.Cursor    = [System.Windows.Forms.Cursors]::HSplit
+$form.Controls.Add($logSplit)
+
+# The "followers" - bottom-anchored controls that sit between the plugin
+# tree and the log frame. They get pushed up/down when the splitter is
+# dragged so they are never overlapped by the resized log. Captured at
+# MouseDown time (some of these references don't exist yet at the point
+# this splitter is constructed - they're created later in the script).
+$Script:logSplitDragging   = $false
+$Script:logSplitStartY     = 0
+$Script:logSplitStartTop   = 0
+$Script:logSplitStartHt    = 0
+$Script:logSplitStartGrpHt = 0
+$Script:logSplitFollowers  = $null
+$Script:logSplitStartFollowerTops = @()
+$logSplit.Add_MouseDown({
+    param($s, $e)
+    $Script:logSplitDragging   = $true
+    $Script:logSplitStartY     = [System.Windows.Forms.Cursor]::Position.Y
+    $Script:logSplitStartTop   = $logFrame.Top
+    $Script:logSplitStartHt    = $logFrame.Height
+    $Script:logSplitStartGrpHt = $grpPlug.Height
+    if ($null -eq $Script:logSplitFollowers) {
+        # Build the follower list now - every bottom-band control that
+        # exists. Variable-name lookup is dynamic so missing names are
+        # silently skipped (avoids brittle ordering).
+        $Script:logSplitFollowers = @()
+        foreach ($n in @('scopeRow','progress','btnRun','btnOpen','btnImgCred','lblImgCred','btnClose','btnSpec','btnGold','btnCreds','btnAcctReq','lblRow2')) {
+            $v = Get-Variable -Name $n -ValueOnly -Scope Script -ErrorAction SilentlyContinue
+            if (-not $v) { $v = Get-Variable -Name $n -ValueOnly -Scope Global -ErrorAction SilentlyContinue }
+            if (-not $v) { $v = Get-Variable -Name $n -ValueOnly -ErrorAction SilentlyContinue }
+            if ($v) { $Script:logSplitFollowers += $v }
+        }
+    }
+    $Script:logSplitStartFollowerTops = @()
+    foreach ($c in $Script:logSplitFollowers) { $Script:logSplitStartFollowerTops += $c.Top }
+})
+$logSplit.Add_MouseMove({
+    param($s, $e)
+    if (-not $Script:logSplitDragging) { return }
+    $delta = [System.Windows.Forms.Cursor]::Position.Y - $Script:logSplitStartY
+    # Drag up = delta negative = log grows, tree shrinks. Clamp so neither
+    # collapses below a usable minimum.
+    $minLog = 60; $minGrp = 100
+    $effectiveDelta = $delta
+    if (($Script:logSplitStartHt - $effectiveDelta) -lt $minLog) {
+        $effectiveDelta = $Script:logSplitStartHt - $minLog
+    }
+    if (($Script:logSplitStartGrpHt + $effectiveDelta) -lt $minGrp) {
+        $effectiveDelta = $minGrp - $Script:logSplitStartGrpHt
+    }
+    $logFrame.Top    = $Script:logSplitStartTop + $effectiveDelta
+    $logFrame.Height = $Script:logSplitStartHt - $effectiveDelta
+    $grpPlug.Height  = $Script:logSplitStartGrpHt + $effectiveDelta
+    $logSplit.Top    = $logFrame.Top - $logSplit.Height
+    # Shift every bottom-band follower by the same delta so they don't
+    # overlap with the resized log.
+    for ($i = 0; $i -lt $Script:logSplitFollowers.Count; $i++) {
+        $Script:logSplitFollowers[$i].Top = $Script:logSplitStartFollowerTops[$i] + $effectiveDelta
+    }
+})
+$logSplit.Add_MouseUp({ $Script:logSplitDragging = $false })
 
 $logBox = New-Object System.Windows.Forms.TextBox
 $logBox.Multiline = $true; $logBox.ScrollBars = 'Vertical'; $logBox.ReadOnly = $true
