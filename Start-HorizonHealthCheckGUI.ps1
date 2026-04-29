@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.54'
+$Script:HealthCheckVersion = '0.93.55'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1941,15 +1941,18 @@ $btnImgCred.Add_Click({
         $mi.Tag = $p.Name
         $mi.Add_Click({
             param($s,$e)
+            $c = $null
             try {
                 $c = Get-AGCredentialAsPSCredential -Name $s.Tag
-                $Script:ImageScanCred = $c
-                $btnImgCred.Text = "Creds: $($c.UserName)"
-                $btnImgCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
-                $btnImgCred.ForeColor = [System.Drawing.Color]::White
             } catch {
                 [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Profile decrypt failed', 'OK', 'Error') | Out-Null
+                return
             }
+            if (-not $c) { return }
+            $Script:ImageScanCred = $c
+            $btnImgCred.Text = "Creds: $($c.UserName)"
+            $btnImgCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+            $btnImgCred.ForeColor = [System.Drawing.Color]::White
         }.GetNewClosure())
     }
     if ($profiles.Count -gt 0) { $menu.Items.Add('-') | Out-Null }
@@ -1974,7 +1977,7 @@ $btnImgCred.Add_Click({
     $miMgr = $menu.Items.Add('Manage Credentials...')
     $miMgr.Add_Click({ Show-CredentialProfileDialog })
     $menu.Show($btnImgCred, 0, $btnImgCred.Height)
-})
+}.GetNewClosure())
 $form.Controls.Add($btnImgCred)
 
 $lblImgCred = New-Object System.Windows.Forms.Label
@@ -2058,14 +2061,17 @@ $btnSpec.Add_Click({
             $mi.Tag = $p.Name
             $mi.Add_Click({
                 param($s,$e)
+                $c = $null
                 try {
                     $c = Get-AGCredentialAsPSCredential -Name $s.Tag
-                    $Script:SpecADCredential = $c
-                    $btnADCred.Text = "Cred: $($c.UserName)"
-                    $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
                 } catch {
                     [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Profile decrypt failed', 'OK', 'Error') | Out-Null
+                    return
                 }
+                if (-not $c) { return }
+                $Script:SpecADCredential = $c
+                $btnADCred.Text = "Cred: $($c.UserName)"
+                $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
             }.GetNewClosure())
         }
         if ($profiles.Count -gt 0) { $menu.Items.Add('-') | Out-Null }
@@ -2088,7 +2094,7 @@ $btnSpec.Add_Click({
         $miMgr = $menu.Items.Add('Manage Credentials...')
         $miMgr.Add_Click({ Show-CredentialProfileDialog })
         $menu.Show($btnADCred, 0, $btnADCred.Height)
-    })
+    }.GetNewClosure())
     $dlg.Controls.Add($btnADCred)
     # RSAT install one-click
     $rsatPresent = [bool](Get-Module -ListAvailable ActiveDirectory)
