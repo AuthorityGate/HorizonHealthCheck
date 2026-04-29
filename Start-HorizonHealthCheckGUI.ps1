@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.37'
+$Script:HealthCheckVersion = '0.93.38'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -688,7 +688,7 @@ if (Test-Path $stateFile) {
         foreach ($k in $loaded.PSObject.Properties.Name) { $state[$k] = $loaded.$k }
     } catch { }
 }
-function Save-State { ($state | ConvertTo-Json -Depth 4) | Out-File -FilePath $stateFile -Encoding utf8 }
+function Global:Save-State { ($state | ConvertTo-Json -Depth 4) | Out-File -FilePath $stateFile -Encoding utf8 }
 
 # ---- Apply starter-dialog selection -------------------------------------
 # Whatever the user picked on the starter is force-set; whatever they did NOT
@@ -790,7 +790,7 @@ function New-PanelControls($parent, $hasUserDomain=$true) {
 # so the function is in the script scope at click time, regardless of where
 # the closure was registered). Read-NameDialog returns a single text value;
 # Read-PassphraseDialog returns a SecureString.
-function Read-NameDialog {
+function Global:Read-NameDialog {
     param([string]$Title='Input', [string]$Prompt='Enter value', [string]$DefaultValue='')
     $d = New-Object System.Windows.Forms.Form
     $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(500, 180)
@@ -816,7 +816,7 @@ function Read-NameDialog {
     return $script:nameResult
 }
 
-function Read-PassphraseDialog {
+function Global:Read-PassphraseDialog {
     param([string]$Title='Passphrase', [string]$Prompt='Enter passphrase')
     $d = New-Object System.Windows.Forms.Form
     $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(460, 180)
@@ -1632,7 +1632,7 @@ $lblScope.Size     = New-Object System.Drawing.Size(380, 22)
 $lblScope.Font     = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 $scopeRow.Controls.Add($lblScope)
 
-function Update-ScopeLabel {
+function Global:Update-ScopeLabel {
     $s = @()
     if ($cHV.Use.Checked  -and $cHV.Server.Text)  { $s += 'Horizon' }
     if ($cVC.Use.Checked  -and $cVC.Server.Text)  { $s += 'vCenter' }
@@ -1988,7 +1988,7 @@ $btnCreds.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Wind
 $btnCreds.Add_Click({ Show-CredentialProfileDialog })
 $form.Controls.Add($btnCreds)
 
-function Show-CredentialProfileDialog {
+function Global:Show-CredentialProfileDialog {
     $dlgC = New-Object System.Windows.Forms.Form
     $dlgC.Text = 'AuthorityGate Credential Profiles'
     $dlgC.Size = New-Object System.Drawing.Size(820, 560)
@@ -2112,7 +2112,7 @@ function Show-CredentialProfileDialog {
     [void]$dlgC.ShowDialog($form)
 }
 
-function Show-CredentialEditDialog {
+function Global:Show-CredentialEditDialog {
     param($Existing)
     $d = New-Object System.Windows.Forms.Form
     $d.Text = if ($Existing) { "Edit Profile: $($Existing.Name)" } else { 'New Credential Profile' }
@@ -2210,7 +2210,7 @@ function Show-CredentialEditDialog {
 }
 
 
-function Show-AuditAccountRequestDialog {
+function Global:Show-AuditAccountRequestDialog {
     [CmdletBinding()]
     param([string]$RootPath = $root)
 
@@ -2374,7 +2374,7 @@ function Show-AuditAccountRequestDialog {
 }
 
 
-function Show-NutanixAccessRequestDialog {
+function Global:Show-NutanixAccessRequestDialog {
     [CmdletBinding()]
     param(
         [string]$RootPath = $root,
@@ -2617,7 +2617,7 @@ $lblRow2.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor `
                   [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($lblRow2)
 
-function Show-GoldImagePicker {
+function Global:Show-GoldImagePicker {
     # Dedicated VC session for the picker - so we do not interfere with the
     # main run. Disconnected on dialog close.
     $dlgGold = New-Object System.Windows.Forms.Form
