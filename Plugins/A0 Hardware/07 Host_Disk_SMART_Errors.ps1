@@ -81,26 +81,36 @@ function Test-SmartAttribute {
         return @{ Verdict = 'info'; Reason = '' }
     }
 
-    # 4. Reallocated/Pending/Uncorrectable Sector counters. ESXi sometimes reports
-    #    the raw count in Value (where 0 = healthy) with a normalized Threshold (90).
-    #    These are NOT comparable. Heuristic: if Value < Threshold but Value is 0 or 1,
-    #    treat as raw count (healthy). If Value is in the 90-100 range and dropping
-    #    toward Threshold, treat as normalized (pre-fail when Value <= Threshold).
+    # 4. Reallocated/Pending/Uncorrectable Sector counters. ESXi reports either
+    #    a normalized score (high = healthy, drops to/below Threshold = bad) OR a
+    #    raw event count (0 = healthy, any non-zero = real reallocations). We
+    #    distinguish them by Value range:
+    #      - Value in 50-200 with Threshold > 0: looks normalized; pre-fail if
+    #        Value <= Threshold (the manufacturer's failing line).
+    #      - Value > 0 outside the normalized range, or with no Threshold:
+    #        treat as raw event count - ANY non-zero is a reallocation/pending
+    #        sector and should be surfaced. Value = 0 is the only clean state.
     if ($p -match 'reallocat(ed|ion)' -or $p -match 'pending\s+sector' -or
         $p -match 'uncorrectable\s+sector' -or $p -match 'reported\s+uncorrectable') {
-        if ($null -eq $vNum -or $null -eq $tNum -or $tNum -le 0) {
+        if ($null -eq $vNum) {
             if ($statusPrefail) { return @{ Verdict = 'prefail'; Reason = "Status: $Status" } }
             return @{ Verdict = 'info'; Reason = '' }
         }
-        # Raw-count signature: Value is 0 or 1 (no reallocations) - skip
-        if ($vNum -le 1) { return @{ Verdict = 'skip'; Reason = "Raw count $vNum (no events; threshold $tNum not comparable)" } }
-        # Normalized signature: Value should be in 50-100 range; below Threshold = pre-fail
-        if ($vNum -ge 50 -and $vNum -le 200 -and $vNum -le $tNum) {
-            return @{ Verdict = 'prefail'; Reason = "Normalized health $vNum <= Threshold $tNum" }
+        if ($vNum -eq 0) {
+            # Truly clean - no events and no normalized health concern
+            return @{ Verdict = 'skip'; Reason = 'No events (Value=0)' }
         }
-        # Anything else - inconclusive
-        if ($statusPrefail) { return @{ Verdict = 'prefail'; Reason = "Status: $Status" } }
-        return @{ Verdict = 'info'; Reason = '' }
+        # Normalized signature first: Value in 50-200 range AND a valid Threshold
+        if ($null -ne $tNum -and $tNum -gt 0 -and $vNum -ge 50 -and $vNum -le 200) {
+            if ($vNum -le $tNum) {
+                return @{ Verdict = 'prefail'; Reason = "Normalized health $vNum <= Threshold $tNum" }
+            }
+            # Normalized score still above threshold = healthy
+            return @{ Verdict = 'info'; Reason = "Normalized health $vNum (above threshold $tNum)" }
+        }
+        # Raw-count interpretation: any non-zero means real events. Even 1
+        # reallocation is worth flagging on a healthcheck.
+        return @{ Verdict = 'prefail'; Reason = "Raw event count: $vNum" }
     }
 
     # 5. Wear Leveling Count / Media Wearout / Available Spare - all normalized,
