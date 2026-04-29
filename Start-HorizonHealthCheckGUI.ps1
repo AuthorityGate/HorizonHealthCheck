@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.33'
+$Script:HealthCheckVersion = '0.93.34'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3388,6 +3388,7 @@ $btnRun.Add_Click({
             Import-Module (Join-Path $rootPath 'Modules\UEMRest.psm1')        -Force -ErrorAction SilentlyContinue
             Import-Module (Join-Path $rootPath 'Modules\UAGRest.psm1')        -Force
             Import-Module (Join-Path $rootPath 'Modules\NSXRest.psm1')        -Force
+            Import-Module (Join-Path $rootPath 'Modules\VeeamRest.psm1')      -Force -ErrorAction SilentlyContinue
 
             $hvSession = $null; $vcConnected = $false; $avSession = $null; $uagSession = $null; $nsxSession = $null
             $ntnxSessions = @{}; $ntnxSession = $null
