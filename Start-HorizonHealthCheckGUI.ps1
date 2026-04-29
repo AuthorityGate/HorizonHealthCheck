@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.55'
+$Script:HealthCheckVersion = '0.93.56'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1933,38 +1933,52 @@ $btnImgCred.Location = New-Object System.Drawing.Point(330, 692)
 $btnImgCred.Size     = New-Object System.Drawing.Size(170, 32)
 $btnImgCred.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
 $btnImgCred.Add_Click({
+    param($sender,$e)
+    $btn = $sender
     # Click drops a context menu: pick profile, prompt manually, or open mgr.
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
     $profiles = @(Get-AGCredentialProfile | Where-Object { $_.Type -in 'Local','Domain','Other' } | Sort-Object Name)
     foreach ($p in $profiles) {
         $mi = $menu.Items.Add("Use profile: $($p.Name)  -  $($p.UserName)  [$($p.Type)]")
-        $mi.Tag = $p.Name
+        # Tag carries both the button reference and the profile name so the
+        # handler doesn't depend on PowerShell closure scope (which gets
+        # eaten by WinForms' event-dispatch boundary).
+        $mi.Tag = @{ Profile = $p.Name; Button = $btn }
         $mi.Add_Click({
-            param($s,$e)
+            param($s,$e2)
+            $tag = $s.Tag
+            if (-not $tag) { return }
             $c = $null
             try {
-                $c = Get-AGCredentialAsPSCredential -Name $s.Tag
+                $c = Get-AGCredentialAsPSCredential -Name $tag.Profile
             } catch {
                 [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Profile decrypt failed', 'OK', 'Error') | Out-Null
                 return
             }
             if (-not $c) { return }
             $Script:ImageScanCred = $c
-            $btnImgCred.Text = "Creds: $($c.UserName)"
-            $btnImgCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
-            $btnImgCred.ForeColor = [System.Drawing.Color]::White
-        }.GetNewClosure())
+            $b = $tag.Button
+            if ($b) {
+                $b.Text = "Creds: $($c.UserName)"
+                $b.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+                $b.ForeColor = [System.Drawing.Color]::White
+            }
+        })
     }
     if ($profiles.Count -gt 0) { $menu.Items.Add('-') | Out-Null }
     $miNew = $menu.Items.Add('Enter credential manually...')
+    $miNew.Tag = @{ Button = $btn }
     $miNew.Add_Click({
+        param($s,$e2)
+        $b = if ($s.Tag) { $s.Tag.Button } else { $null }
         $c = Get-Credential -Message "Windows credential with WinRM rights to gold / RDSH / packaging VMs (e.g. DOMAIN\image-scan-svc OR .\Administrator for local). Cancel = skip Tier 2 deep scan."
         if ($c) {
             $Script:ImageScanCred = $c
-            $btnImgCred.Text = "Creds: $($c.UserName)"
-            $btnImgCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
-            $btnImgCred.ForeColor = [System.Drawing.Color]::White
-            # Offer to save as profile
+            if ($b) {
+                $b.Text = "Creds: $($c.UserName)"
+                $b.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+                $b.ForeColor = [System.Drawing.Color]::White
+            }
             if ([System.Windows.Forms.MessageBox]::Show("Save these credentials as a named profile so they're reusable?", 'Save profile', 'YesNo', 'Question') -eq 'Yes') {
                 $name = Read-NameDialog -Title 'Save credential profile' -Prompt 'Name this profile (visible in the Profile menu next time):' -DefaultValue "DeepScan - $($c.UserName)"
                 if ($name) {
@@ -1976,8 +1990,8 @@ $btnImgCred.Add_Click({
     })
     $miMgr = $menu.Items.Add('Manage Credentials...')
     $miMgr.Add_Click({ Show-CredentialProfileDialog })
-    $menu.Show($btnImgCred, 0, $btnImgCred.Height)
-}.GetNewClosure())
+    $menu.Show($btn, 0, $btn.Height)
+})
 $form.Controls.Add($btnImgCred)
 
 $lblImgCred = New-Object System.Windows.Forms.Label
@@ -2053,36 +2067,55 @@ $btnSpec.Add_Click({
     if ($Script:SpecADCredential) {
         $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
     }
+    # Store the button reference on its own Tag so menu-item handlers can
+    # find it without relying on PowerShell closure scope (which gets eaten
+    # by WinForms' event-dispatch boundary in some PS5.1 builds).
+    $btnADCred.Tag = @{ Self = $btnADCred }
     $btnADCred.Add_Click({
+        param($sender,$e)
+        $btn = $sender    # the button itself
         $menu = New-Object System.Windows.Forms.ContextMenuStrip
         $profiles = @(Get-AGCredentialProfile | Where-Object { $_.Type -in 'Domain','Other' } | Sort-Object Name)
         foreach ($p in $profiles) {
             $mi = $menu.Items.Add("Use profile: $($p.Name)  -  $($p.UserName)")
-            $mi.Tag = $p.Name
+            # Each menu item carries the button reference + profile name so
+            # the click handler doesn't need closure scope to find them.
+            $mi.Tag = @{ Profile = $p.Name; Button = $btn }
             $mi.Add_Click({
-                param($s,$e)
+                param($s,$e2)
+                $tag = $s.Tag
+                if (-not $tag) { return }
                 $c = $null
                 try {
-                    $c = Get-AGCredentialAsPSCredential -Name $s.Tag
+                    $c = Get-AGCredentialAsPSCredential -Name $tag.Profile
                 } catch {
                     [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Profile decrypt failed', 'OK', 'Error') | Out-Null
                     return
                 }
                 if (-not $c) { return }
                 $Script:SpecADCredential = $c
-                $btnADCred.Text = "Cred: $($c.UserName)"
-                $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
-            }.GetNewClosure())
+                $b = $tag.Button
+                if ($b) {
+                    $b.Text = "Cred: $($c.UserName)"
+                    $b.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+                    $b.ForeColor = [System.Drawing.Color]::White
+                }
+            })
         }
         if ($profiles.Count -gt 0) { $menu.Items.Add('-') | Out-Null }
         $miNew = $menu.Items.Add('Enter credential manually...')
+        $miNew.Tag = @{ Button = $btn }
         $miNew.Add_Click({
+            param($s,$e2)
+            $b = if ($s.Tag) { $s.Tag.Button } else { $null }
             $c = Get-Credential -Message "AD credential for the forest hint above. UPN form: user@authoritygate.net"
             if ($c) {
                 $Script:SpecADCredential = $c
-                $btnADCred.Text = "Cred: $($c.UserName)"
-                $btnADCred.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96); $btnADCred.ForeColor = [System.Drawing.Color]::White
-                # Offer to save as profile
+                if ($b) {
+                    $b.Text = "Cred: $($c.UserName)"
+                    $b.BackColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+                    $b.ForeColor = [System.Drawing.Color]::White
+                }
                 if ([System.Windows.Forms.MessageBox]::Show("Save these AD credentials as a named profile?", 'Save profile', 'YesNo', 'Question') -eq 'Yes') {
                     $name = Read-NameDialog -Title 'Save credential profile' -Prompt 'Name this profile:' -DefaultValue "AD - $($c.UserName)"
                     if ($name) {
@@ -2093,8 +2126,8 @@ $btnSpec.Add_Click({
         })
         $miMgr = $menu.Items.Add('Manage Credentials...')
         $miMgr.Add_Click({ Show-CredentialProfileDialog })
-        $menu.Show($btnADCred, 0, $btnADCred.Height)
-    }.GetNewClosure())
+        $menu.Show($btn, 0, $btn.Height)
+    })
     $dlg.Controls.Add($btnADCred)
     # RSAT install one-click
     $rsatPresent = [bool](Get-Module -ListAvailable ActiveDirectory)
