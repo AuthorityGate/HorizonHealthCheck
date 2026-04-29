@@ -82,14 +82,27 @@ function Test-SmartAttribute {
     }
 
     # 4. Reallocated/Pending/Uncorrectable Sector counters. ESXi reports either
-    #    a normalized score (high = healthy, drops to/below Threshold = bad) OR a
-    #    raw event count (0 = healthy, any non-zero = real reallocations). We
-    #    distinguish them by Value range:
-    #      - Value in 50-200 with Threshold > 0: looks normalized; pre-fail if
-    #        Value <= Threshold (the manufacturer's failing line).
-    #      - Value > 0 outside the normalized range, or with no Threshold:
-    #        treat as raw event count - ANY non-zero is a reallocation/pending
-    #        sector and should be surfaced. Value = 0 is the only clean state.
+    #    a normalized score (100 or 200 = full health, decreases as drive ages,
+    #    Threshold = manufacturer's failing line) OR a raw event count (0 = no
+    #    events, any non-zero = real reallocations).
+    #
+    #    Some drives (SanDisk SSDs in particular) report the normalized score
+    #    with Threshold = 0 - meaning "the firmware doesn't declare a failing
+    #    line for this attribute", NOT "raw count comparison". A Value of 100
+    #    with Threshold 0 is healthy.
+    #
+    #    Classifier:
+    #      - Value 0: clean (no events; no normalized concern).
+    #      - Value 95-200: looks like normalized full-health score. Pre-fail
+    #        only when Threshold > 0 AND Value <= Threshold. With Threshold = 0
+    #        we trust the score and treat it as healthy.
+    #      - Value 1-94 with Threshold > 0 and Value <= Threshold: pre-fail
+    #        (normalized score genuinely below the failing line).
+    #      - Value 1-94 with Threshold = 0: probably a raw event count
+    #        (firmware reports actual reallocations) - pre-fail. Even 1 event
+    #        worth flagging on a healthcheck.
+    #      - Value 1-94 with Threshold > 0 but Value > Threshold: ambiguous,
+    #        emit Info.
     if ($p -match 'reallocat(ed|ion)' -or $p -match 'pending\s+sector' -or
         $p -match 'uncorrectable\s+sector' -or $p -match 'reported\s+uncorrectable') {
         if ($null -eq $vNum) {
@@ -97,19 +110,31 @@ function Test-SmartAttribute {
             return @{ Verdict = 'info'; Reason = '' }
         }
         if ($vNum -eq 0) {
-            # Truly clean - no events and no normalized health concern
             return @{ Verdict = 'skip'; Reason = 'No events (Value=0)' }
         }
-        # Normalized signature first: Value in 50-200 range AND a valid Threshold
-        if ($null -ne $tNum -and $tNum -gt 0 -and $vNum -ge 50 -and $vNum -le 200) {
+        # Normalized full-health signature - Value sits at the top of the
+        # decreasing scale (100 or 200). Threshold = 0 = no declared failing
+        # line; trust the high score as healthy.
+        if ($vNum -ge 95 -and $vNum -le 200) {
+            if ($null -ne $tNum -and $tNum -gt 0 -and $vNum -le $tNum) {
+                return @{ Verdict = 'prefail'; Reason = "Normalized health $vNum <= Threshold $tNum" }
+            }
+            $reason = if ($null -ne $tNum -and $tNum -gt 0) {
+                "Normalized health $vNum (above threshold $tNum)"
+            } else {
+                "Normalized health $vNum (no failing line declared)"
+            }
+            return @{ Verdict = 'info'; Reason = $reason }
+        }
+        # Value 1-94: either a degraded normalized score or a raw event count.
+        if ($null -ne $tNum -and $tNum -gt 0) {
             if ($vNum -le $tNum) {
                 return @{ Verdict = 'prefail'; Reason = "Normalized health $vNum <= Threshold $tNum" }
             }
-            # Normalized score still above threshold = healthy
-            return @{ Verdict = 'info'; Reason = "Normalized health $vNum (above threshold $tNum)" }
+            # Above threshold, low normalized score - unusual, emit Info
+            return @{ Verdict = 'info'; Reason = "Value $vNum below normal range but above threshold $tNum" }
         }
-        # Raw-count interpretation: any non-zero means real events. Even 1
-        # reallocation is worth flagging on a healthcheck.
+        # No threshold - treat as raw event count. Any non-zero is a real event.
         return @{ Verdict = 'prefail'; Reason = "Raw event count: $vNum" }
     }
 
