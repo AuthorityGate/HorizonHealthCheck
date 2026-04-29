@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.35'
+$Script:HealthCheckVersion = '0.93.36'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3033,50 +3033,75 @@ $logTimer.Add_Tick({
     }
 })
 
-# Generic Test-Connection handler factory
+# Generic Test-Connection handler factory.
+# Horizon, vCenter, and Nutanix accept comma/semicolon-separated server
+# lists (multi-pod / multi-vCenter / multi-target). The Test handler splits
+# the same way the runspace does and reports per-server success / failure
+# so a single bad FQDN does not mask a working second target.
 function Register-TestHandler($ctrls, $kind, $rootPath) {
     $ctrls.Test.Add_Click({
         if (-not $ctrls.Server.Text -or -not $ctrls.User.Text -or -not $ctrls.Pass.Text) {
             [System.Windows.Forms.MessageBox]::Show("Enter $kind server, user, and password first.", 'Test', 'OK', 'Information') | Out-Null
             return
         }
-        try {
-            $sec = ConvertTo-SecureString $ctrls.Pass.Text -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential($ctrls.User.Text, $sec)
-            switch ($kind) {
-                'Horizon' {
-                    Import-Module (Join-Path $rootPath 'Modules\HorizonRest.psm1') -Force
-                    Connect-HVRest -Server $ctrls.Server.Text -Credential $cred -Domain $ctrls.Domain.Text -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
-                    Disconnect-HVRest
-                }
-                'vCenter' {
-                    if (-not (Get-Module -ListAvailable VMware.VimAutomation.Core)) { throw "PowerCLI not installed." }
-                    Import-Module VMware.VimAutomation.Core -ErrorAction SilentlyContinue
-                    if ($ctrls.SkipCert.Checked) { Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -Scope Session | Out-Null }
-                    Connect-VIServer -Server $ctrls.Server.Text -Credential $cred -ErrorAction Stop | Out-Null
-                    Disconnect-VIServer -Server $ctrls.Server.Text -Confirm:$false -Force | Out-Null
-                }
-                'AppVolumes' {
-                    Import-Module (Join-Path $rootPath 'Modules\AppVolumesRest.psm1') -Force
-                    Connect-AVRest -Server $ctrls.Server.Text -Credential $cred -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
-                    Disconnect-AVRest
-                }
-                'UAG' {
-                    Import-Module (Join-Path $rootPath 'Modules\UAGRest.psm1') -Force
-                    $port = [int]($ctrls.Port.Text)
-                    Connect-UAGRest -Server $ctrls.Server.Text -Credential $cred -Port $port -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
-                    Disconnect-UAGRest
-                }
-                'NSX' {
-                    Import-Module (Join-Path $rootPath 'Modules\NSXRest.psm1') -Force
-                    Connect-NSXRest -Server $ctrls.Server.Text -Credential $cred -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
-                    Disconnect-NSXRest
-                }
-            }
-            [System.Windows.Forms.MessageBox]::Show("$kind connection succeeded.", 'Test', 'OK', 'Information') | Out-Null
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show("Connection failed:`n`n$($_.Exception.Message)", 'Test', 'OK', 'Error') | Out-Null
+        $sec = ConvertTo-SecureString $ctrls.Pass.Text -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential($ctrls.User.Text, $sec)
+
+        # Backends that accept multi-target lists (per the GUI hint text).
+        $multiKinds = @('Horizon','vCenter')
+        $servers = if ($kind -in $multiKinds) {
+            @($ctrls.Server.Text -split '[,;]\s*' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        } else {
+            @($ctrls.Server.Text.Trim())
         }
+        if ($servers.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show("Server FQDN field is empty after splitting on , and ;.", 'Test', 'OK', 'Information') | Out-Null
+            return
+        }
+
+        $results = New-Object System.Collections.Generic.List[string]
+        $allOk = $true
+        foreach ($srv in $servers) {
+            try {
+                switch ($kind) {
+                    'Horizon' {
+                        Import-Module (Join-Path $rootPath 'Modules\HorizonRest.psm1') -Force
+                        Connect-HVRest -Server $srv -Credential $cred -Domain $ctrls.Domain.Text -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
+                        Disconnect-HVRest
+                    }
+                    'vCenter' {
+                        if (-not (Get-Module -ListAvailable VMware.VimAutomation.Core)) { throw "PowerCLI not installed." }
+                        Import-Module VMware.VimAutomation.Core -ErrorAction SilentlyContinue
+                        if ($ctrls.SkipCert.Checked) { Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -Scope Session | Out-Null }
+                        Connect-VIServer -Server $srv -Credential $cred -ErrorAction Stop | Out-Null
+                        Disconnect-VIServer -Server $srv -Confirm:$false -Force | Out-Null
+                    }
+                    'AppVolumes' {
+                        Import-Module (Join-Path $rootPath 'Modules\AppVolumesRest.psm1') -Force
+                        Connect-AVRest -Server $srv -Credential $cred -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
+                        Disconnect-AVRest
+                    }
+                    'UAG' {
+                        Import-Module (Join-Path $rootPath 'Modules\UAGRest.psm1') -Force
+                        $port = [int]($ctrls.Port.Text)
+                        Connect-UAGRest -Server $srv -Credential $cred -Port $port -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
+                        Disconnect-UAGRest
+                    }
+                    'NSX' {
+                        Import-Module (Join-Path $rootPath 'Modules\NSXRest.psm1') -Force
+                        Connect-NSXRest -Server $srv -Credential $cred -SkipCertificateCheck:$ctrls.SkipCert.Checked | Out-Null
+                        Disconnect-NSXRest
+                    }
+                }
+                $results.Add("[OK]   $srv") | Out-Null
+            } catch {
+                $allOk = $false
+                $results.Add("[FAIL] $srv : $($_.Exception.Message)") | Out-Null
+            }
+        }
+        $title = if ($allOk) { "$kind - all $($servers.Count) target(s) OK" } else { "$kind - some target(s) failed" }
+        $icon  = if ($allOk) { 'Information' } else { 'Warning' }
+        [System.Windows.Forms.MessageBox]::Show(($results -join "`r`n"), $title, 'OK', $icon) | Out-Null
     }.GetNewClosure())
 }
 Register-TestHandler $cHV  'Horizon'    $root
