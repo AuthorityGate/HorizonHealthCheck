@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.58'
+$Script:HealthCheckVersion = '0.93.59'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1519,22 +1519,83 @@ $lblADHdr.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
 $lblADHdr.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
 $tabAD.Controls.Add($lblADHdr)
 
+# Buttons row first (above grid) so they're always visible regardless of
+# tab page height. Grid grows downward with anchor; buttons stay anchored
+# to the top.
+$cAD.BtnAdd = New-Object System.Windows.Forms.Button
+$cAD.BtnAdd.Text = 'Add forest...'
+$cAD.BtnAdd.Location = New-Object System.Drawing.Point(20, 82); $cAD.BtnAdd.Size = New-Object System.Drawing.Size(120, 26)
+$cAD.BtnAdd.FlatStyle = 'Flat'
+$tabAD.Controls.Add($cAD.BtnAdd)
+
+$cAD.BtnCred = New-Object System.Windows.Forms.Button
+$cAD.BtnCred.Text = 'Set credential...'
+$cAD.BtnCred.Location = New-Object System.Drawing.Point(150, 82); $cAD.BtnCred.Size = New-Object System.Drawing.Size(140, 26)
+$cAD.BtnCred.FlatStyle = 'Flat'
+$tabAD.Controls.Add($cAD.BtnCred)
+
+$cAD.BtnRemove = New-Object System.Windows.Forms.Button
+$cAD.BtnRemove.Text = 'Remove selected'
+$cAD.BtnRemove.Location = New-Object System.Drawing.Point(300, 82); $cAD.BtnRemove.Size = New-Object System.Drawing.Size(130, 26)
+$cAD.BtnRemove.FlatStyle = 'Flat'
+$tabAD.Controls.Add($cAD.BtnRemove)
+
+$cAD.BtnTest = New-Object System.Windows.Forms.Button
+$cAD.BtnTest.Text = 'Test all'
+$cAD.BtnTest.Location = New-Object System.Drawing.Point(440, 82); $cAD.BtnTest.Size = New-Object System.Drawing.Size(110, 26)
+$cAD.BtnTest.FlatStyle = 'Flat'
+$tabAD.Controls.Add($cAD.BtnTest)
+
 $cAD.Grid = New-Object System.Windows.Forms.DataGridView
-$cAD.Grid.Location = New-Object System.Drawing.Point(20, 80)
-$cAD.Grid.Size     = New-Object System.Drawing.Size(620, 140)
+$cAD.Grid.Location = New-Object System.Drawing.Point(20, 116)
+$cAD.Grid.Size     = New-Object System.Drawing.Size(620, 130)
 $cAD.Grid.AllowUserToAddRows    = $false
 $cAD.Grid.AllowUserToDeleteRows = $false
 $cAD.Grid.MultiSelect           = $false
 $cAD.Grid.SelectionMode         = 'FullRowSelect'
 $cAD.Grid.RowHeadersVisible     = $false
 $cAD.Grid.AutoSizeColumnsMode   = 'Fill'
-$cAD.Grid.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$cAD.Grid.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $null = $cAD.Grid.Columns.Add('colDC','DC / DNS Server FQDN')
 $null = $cAD.Grid.Columns.Add('colForest','Forest FQDN (optional)')
 $null = $cAD.Grid.Columns.Add('colCred','Credential Profile')
 $null = $cAD.Grid.Columns.Add('colStatus','Status')
 $cAD.Grid.Columns['colStatus'].ReadOnly = $true
 $tabAD.Controls.Add($cAD.Grid)
+
+# Dynamic status line: lists every configured DC/Forest so the operator
+# can see at a glance what will be probed - matches the user request to
+# "have the AD server in the text".
+$cAD.LblStatus = New-Object System.Windows.Forms.Label
+$cAD.LblStatus.Location = New-Object System.Drawing.Point(20, 252)
+$cAD.LblStatus.Size     = New-Object System.Drawing.Size(620, 32)
+$cAD.LblStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 0)
+$cAD.LblStatus.Font     = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+$cAD.LblStatus.Text = '(no forests configured)'
+$cAD.LblStatus.AutoEllipsis = $true
+$tabAD.Controls.Add($cAD.LblStatus)
+
+# Status updater - call after any row mutation
+function Global:Update-ADStatusLabel {
+    if (-not $cAD -or -not $cAD.Grid) { return }
+    $entries = @()
+    foreach ($r in $cAD.Grid.Rows) {
+        $dc = [string]$r.Cells['colDC'].Value
+        if (-not $dc) { continue }
+        $f = [string]$r.Cells['colForest'].Value
+        if ($f) { $entries += "$dc (forest=$f)" } else { $entries += $dc }
+    }
+    if ($entries.Count -eq 0) {
+        $cAD.LblStatus.Text = '(no forests configured)'
+        $cAD.LblStatus.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+    } else {
+        $cAD.LblStatus.Text = "Configured ($($entries.Count)): $($entries -join '  |  ')"
+        $cAD.LblStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 0)
+    }
+}
+$cAD.Grid.Add_RowsAdded({ Update-ADStatusLabel })
+$cAD.Grid.Add_RowsRemoved({ Update-ADStatusLabel })
+$cAD.Grid.Add_CellEndEdit({ Update-ADStatusLabel })
 
 # Pre-populate from saved state. Tolerates rows written by older builds that
 # only had a single Forest field - in that case Server defaults to the same.
@@ -1553,24 +1614,16 @@ foreach ($e in @($state.ADForests)) {
     [void]$cAD.Grid.Rows.Add($dc, $f, $cp, '')
 }
 
-# Add row
-$cAD.BtnAdd = New-Object System.Windows.Forms.Button
-$cAD.BtnAdd.Text = 'Add forest...'
-$cAD.BtnAdd.Location = New-Object System.Drawing.Point(20, 230); $cAD.BtnAdd.Size = New-Object System.Drawing.Size(120, 26)
-$cAD.BtnAdd.FlatStyle = 'Flat'
+# Wire click handlers to the buttons created above (above the grid).
+
 $cAD.BtnAdd.Add_Click({
     $dc = Read-NameDialog -Title 'Add DC / DNS server' -Prompt "Reachable DC or DNS server FQDN (e.g. 'AGIADDNS01.authoritygate.net'):" -DefaultValue ''
     if (-not $dc) { return }
     $f = Read-NameDialog -Title 'Forest FQDN (optional)' -Prompt "Forest FQDN (e.g. 'authoritygate.net'). Leave blank to auto-discover from the DC above:" -DefaultValue ''
     [void]$cAD.Grid.Rows.Add($dc.Trim(), ($(if ($f) { $f.Trim() } else { '' })), '', '')
+    Update-ADStatusLabel
 })
-$tabAD.Controls.Add($cAD.BtnAdd)
 
-# Set credential on selected row
-$cAD.BtnCred = New-Object System.Windows.Forms.Button
-$cAD.BtnCred.Text = 'Set credential...'
-$cAD.BtnCred.Location = New-Object System.Drawing.Point(150, 230); $cAD.BtnCred.Size = New-Object System.Drawing.Size(140, 26)
-$cAD.BtnCred.FlatStyle = 'Flat'
 $cAD.BtnCred.Tag = @{ Grid = $cAD.Grid }
 $cAD.BtnCred.Add_Click({
     param($s,$e)
@@ -1599,56 +1652,16 @@ $cAD.BtnCred.Add_Click({
     $miMgr.Add_Click({ Show-CredentialProfileDialog })
     $menu.Show($s, 0, $s.Height)
 })
-$tabAD.Controls.Add($cAD.BtnCred)
 
-# Remove selected row
-$cAD.BtnRemove = New-Object System.Windows.Forms.Button
-$cAD.BtnRemove.Text = 'Remove selected'
-$cAD.BtnRemove.Location = New-Object System.Drawing.Point(300, 230); $cAD.BtnRemove.Size = New-Object System.Drawing.Size(130, 26)
-$cAD.BtnRemove.FlatStyle = 'Flat'
 $cAD.BtnRemove.Tag = @{ Grid = $cAD.Grid }
 $cAD.BtnRemove.Add_Click({
     param($s,$e)
     $g = $s.Tag.Grid
     if (-not $g -or $g.SelectedRows.Count -eq 0) { return }
     $g.Rows.Remove($g.SelectedRows[0])
+    Update-ADStatusLabel
 })
-$tabAD.Controls.Add($cAD.BtnRemove)
 
-# RSAT presence + install button
-$rsatPresentAD = [bool](Get-Module -ListAvailable ActiveDirectory)
-$cAD.LblRsat = New-Object System.Windows.Forms.Label
-if ($rsatPresentAD) {
-    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: INSTALLED on this runner.'
-    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
-} else {
-    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: NOT installed (AD plugins will skip until installed).'
-    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
-}
-$cAD.LblRsat.Location = New-Object System.Drawing.Point(20, 268); $cAD.LblRsat.Size = New-Object System.Drawing.Size(440, 18)
-$cAD.LblRsat.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
-$tabAD.Controls.Add($cAD.LblRsat)
-
-$cAD.BtnRsat = New-Object System.Windows.Forms.Button
-$cAD.BtnRsat.Text = if ($rsatPresentAD) { 'RSAT installed' } else { 'Install RSAT now...' }
-$cAD.BtnRsat.Location = New-Object System.Drawing.Point(470, 264); $cAD.BtnRsat.Size = New-Object System.Drawing.Size(170, 24)
-$cAD.BtnRsat.Enabled = (-not $rsatPresentAD)
-$cAD.BtnRsat.Add_Click({
-    $rsatScript = Join-Path $PSScriptRoot 'Tools\Install-RSAT.ps1'
-    if (-not (Test-Path $rsatScript)) {
-        [System.Windows.Forms.MessageBox]::Show("Install-RSAT.ps1 not found at $rsatScript.", 'RSAT install', 'OK', 'Error') | Out-Null
-        return
-    }
-    Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$rsatScript) -WindowStyle Normal
-    [System.Windows.Forms.MessageBox]::Show("RSAT install launched in elevated PowerShell. Wait for it to complete (~1-2 min), then close + reopen this GUI to detect the new module.", 'RSAT install', 'OK', 'Information') | Out-Null
-})
-$tabAD.Controls.Add($cAD.BtnRsat)
-
-# Test connectivity for all configured forests
-$cAD.BtnTest = New-Object System.Windows.Forms.Button
-$cAD.BtnTest.Text = 'Test all forests'
-$cAD.BtnTest.Location = New-Object System.Drawing.Point(20, 296); $cAD.BtnTest.Size = New-Object System.Drawing.Size(140, 26)
-$cAD.BtnTest.FlatStyle = 'Flat'
 $cAD.BtnTest.Tag = @{ Grid = $cAD.Grid }
 $cAD.BtnTest.Add_Click({
     param($s,$e)
@@ -1675,7 +1688,6 @@ $cAD.BtnTest.Add_Click({
             $d = Get-ADDomain @adArgs
             $statusMsg = "OK (DNSRoot=$($d.DNSRoot), Forest=$($d.Forest))"
             if (-not $forest) {
-                # Auto-fill discovered forest into the row for convenience
                 $row.Cells['colForest'].Value = [string]$d.Forest
             } elseif ($forest -ne $d.Forest) {
                 $statusMsg += " - WARNING: configured Forest '$forest' != DC's actual Forest '$($d.Forest)'"
@@ -1685,8 +1697,41 @@ $cAD.BtnTest.Add_Click({
             $row.Cells['colStatus'].Value = "FAIL: $($_.Exception.Message)"
         }
     }
+    Update-ADStatusLabel
 })
-$tabAD.Controls.Add($cAD.BtnTest)
+
+# RSAT presence + install button (moved here from the Specialized Scope
+# dialog - belongs with the AD configuration that needs it).
+$rsatPresentAD = [bool](Get-Module -ListAvailable ActiveDirectory)
+$cAD.LblRsat = New-Object System.Windows.Forms.Label
+if ($rsatPresentAD) {
+    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: INSTALLED on this runner.'
+    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+} else {
+    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: NOT installed (AD plugins will skip until installed).'
+    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+}
+$cAD.LblRsat.Location = New-Object System.Drawing.Point(20, 290); $cAD.LblRsat.Size = New-Object System.Drawing.Size(440, 18)
+$cAD.LblRsat.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+$tabAD.Controls.Add($cAD.LblRsat)
+
+$cAD.BtnRsat = New-Object System.Windows.Forms.Button
+$cAD.BtnRsat.Text = if ($rsatPresentAD) { 'RSAT installed' } else { 'Install RSAT now...' }
+$cAD.BtnRsat.Location = New-Object System.Drawing.Point(470, 286); $cAD.BtnRsat.Size = New-Object System.Drawing.Size(170, 24)
+$cAD.BtnRsat.Enabled = (-not $rsatPresentAD)
+$cAD.BtnRsat.Add_Click({
+    $rsatScript = Join-Path $PSScriptRoot 'Tools\Install-RSAT.ps1'
+    if (-not (Test-Path $rsatScript)) {
+        [System.Windows.Forms.MessageBox]::Show("Install-RSAT.ps1 not found at $rsatScript.", 'RSAT install', 'OK', 'Error') | Out-Null
+        return
+    }
+    Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$rsatScript) -WindowStyle Normal
+    [System.Windows.Forms.MessageBox]::Show("RSAT install launched in elevated PowerShell. Wait for it to complete (~1-2 min), then close + reopen this GUI to detect the new module.", 'RSAT install', 'OK', 'Information') | Out-Null
+})
+$tabAD.Controls.Add($cAD.BtnRsat)
+
+# Initial status update for any rows pre-loaded from state.json
+Update-ADStatusLabel
 
 $tabUAG = New-Object System.Windows.Forms.TabPage; $tabUAG.Text = 'UAG';         $tabs.TabPages.Add($tabUAG)
 $cUAG = New-PanelControls $tabUAG $false
@@ -1801,15 +1846,24 @@ if (-not $state.UseVIDM)    { Disable-Tab $cVIDM $tabVIDM }
 if (-not $state.UseUEM)     { Disable-Tab $cUEM  $tabUEM  }
 if (-not $state.UseUAG)     { Disable-Tab $cUAG $tabUAG }
 if (-not $state.UseNSX)     { Disable-Tab $cNSX $tabNSX }
+if (-not $state.UseAD) {
+    # AD tab uses a different shape (multi-row grid, no Server/User/Pass)
+    # so Disable-Tab's Server/User/Pass.Clear() doesn't apply. Just append
+    # the (off) suffix and disable the action buttons.
+    $cAD.Use.Checked = $false
+    foreach ($k in @('BtnAdd','BtnCred','BtnRemove','BtnTest')) { if ($cAD[$k]) { $cAD[$k].Enabled = $false } }
+    $cAD.Grid.Enabled = $false
+    $tabAD.Text = $tabAD.Text + ' (off)'
+}
 # Each tab page gets AutoScroll so its panels can scroll independently when
 # the window is shorter than the tab's content. Important for jumpboxes /
 # seamless RDP at 1366x768 where the form had clipped controls off-screen
 # with no way to reach them. AutoScrollMinSize captures the in-page content
 # height so PowerShell knows when to show the scrollbar.
-foreach ($tp in @($tabHV, $tabVC, $tabAV, $tabNTNX, $tabVIDM, $tabUEM, $tabUAG, $tabNSX, $tabDEM, $tabLic)) {
+foreach ($tp in @($tabHV, $tabVC, $tabAV, $tabNTNX, $tabVIDM, $tabUEM, $tabUAG, $tabNSX, $tabDEM, $tabLic, $tabAD)) {
     if ($tp) {
         $tp.AutoScroll = $true
-        $tp.AutoScrollMinSize = New-Object System.Drawing.Size(840, 320)
+        $tp.AutoScrollMinSize = New-Object System.Drawing.Size(840, 340)
     }
 }
 
@@ -2326,34 +2380,8 @@ $btnSpec.Add_Click({
         $menu.Show($btn, 0, $btn.Height)
     })
     $dlg.Controls.Add($btnADCred)
-    # RSAT install one-click
-    $rsatPresent = [bool](Get-Module -ListAvailable ActiveDirectory)
-    $lblADHint = New-Object System.Windows.Forms.Label
-    if ($rsatPresent) {
-        $lblADHint.Text = 'RSAT ActiveDirectory module: INSTALLED on this runner.'
-        $lblADHint.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
-    } else {
-        $lblADHint.Text = 'RSAT ActiveDirectory module: NOT installed (AD plugins will skip until installed).'
-        $lblADHint.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
-    }
-    $lblADHint.Location = New-Object System.Drawing.Point(14, 162); $lblADHint.Size = New-Object System.Drawing.Size(420, 18)
-    $lblADHint.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
-    $dlg.Controls.Add($lblADHint)
-    $btnRsat = New-Object System.Windows.Forms.Button
-    $btnRsat.Text = if ($rsatPresent) { 'RSAT installed' } else { 'Install RSAT now...' }
-    $btnRsat.Location = New-Object System.Drawing.Point(440, 158); $btnRsat.Size = New-Object System.Drawing.Size(174, 24)
-    $btnRsat.Enabled = (-not $rsatPresent)
-    $btnRsat.Add_Click({
-        $rsatScript = Join-Path $PSScriptRoot 'Tools\Install-RSAT.ps1'
-        if (-not (Test-Path $rsatScript)) {
-            [System.Windows.Forms.MessageBox]::Show("Install-RSAT.ps1 not found at $rsatScript.", 'RSAT install', 'OK', 'Error') | Out-Null
-            return
-        }
-        # Launch elevated; the script handles its own elevation prompt.
-        Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$rsatScript) -WindowStyle Normal
-        [System.Windows.Forms.MessageBox]::Show("RSAT install launched in elevated PowerShell. Wait for it to complete (~1-2 min), then close + reopen this GUI to detect the new module.", 'RSAT install', 'OK', 'Information') | Out-Null
-    })
-    $dlg.Controls.Add($btnRsat)
+    # RSAT discovery + install moved to the AD tab on the main form (lives
+    # next to the configuration that needs it).
 
     # MFA / External auth
     $cbMFA = New-Object System.Windows.Forms.CheckBox
