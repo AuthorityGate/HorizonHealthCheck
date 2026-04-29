@@ -560,7 +560,67 @@ function Invoke-HVRest {
 # Endpoint paths drawn from the Horizon REST API reference. Where an older Horizon
 # (pre-2306) lacks an endpoint, the wrapper returns $null and lets the plugin skip.
 
-function Get-HVConnectionServer  { Invoke-HVRest -Path '/v1/monitor/connection-servers' }
+function Get-HVConnectionServer {
+    # Horizon 8.6+ /v1/monitor/connection-servers returns ONLY id + jwt
+    # data - all the rich metadata (name, version, build, status,
+    # replication) lives at /v1/config/connection-servers OR is reachable
+    # only via the per-id /v1/config/connection-servers/{id} detail call.
+    # We pull the monitor list (live status), pull the config list (or per-id
+    # config when the list endpoint isn't there), merge by id, and return
+    # one composite object per CS. Plugins reading $c.name / $c.version /
+    # $c.build now get real data instead of empty strings.
+    $monitor = @(Invoke-HVRest -Path '/v1/monitor/connection-servers')
+    if (-not $monitor -or $monitor.Count -eq 0) { return @() }
+
+    # Try the LIST config endpoint first (newer Horizon).
+    $configList = $null
+    foreach ($p in @('/v1/config/connection-servers','/v2/config/connection-servers','/config/v1/connection-servers')) {
+        try {
+            $configList = @(Invoke-HVRest -Path $p -ErrorAction SilentlyContinue)
+            if ($configList -and $configList.Count -gt 0) { break }
+            $configList = $null
+        } catch { }
+    }
+
+    # Build {id -> configRow} map. Fall back to per-id detail when the
+    # list endpoint is unavailable (older Horizon or restricted scope).
+    $cfgMap = @{}
+    if ($configList) {
+        foreach ($c in $configList) {
+            if ($c -and $c.id) { $cfgMap[$c.id] = $c }
+        }
+    } else {
+        foreach ($m in $monitor) {
+            if (-not $m -or -not $m.id) { continue }
+            try {
+                $cfg = Invoke-HVRest -Path "/v1/config/connection-servers/$($m.id)" -NoPaging -ErrorAction SilentlyContinue
+                if ($cfg) { $cfgMap[$m.id] = $cfg }
+            } catch { }
+        }
+    }
+
+    # Merge: every monitor row plus matching config row's properties (config
+    # wins for name/version/build because monitor often doesn't carry them).
+    foreach ($m in $monitor) {
+        if (-not $m) { continue }
+        $cfg = if ($m.id -and $cfgMap.ContainsKey($m.id)) { $cfgMap[$m.id] } else { $null }
+        if ($cfg) {
+            foreach ($prop in $cfg.PSObject.Properties) {
+                if ($prop.Name -eq 'id') { continue }
+                $existing = $m.PSObject.Properties[$prop.Name]
+                if ($existing) {
+                    # Prefer config value when monitor's is empty/null
+                    if ($null -eq $existing.Value -or "$($existing.Value)" -eq '') {
+                        Add-Member -InputObject $m -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                    }
+                } else {
+                    Add-Member -InputObject $m -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                }
+            }
+        }
+        $m
+    }
+}
 function Get-HVPod               { Invoke-HVRest -Path '/v1/pods' }
 function Get-HVSite              { Invoke-HVRest -Path '/v1/sites' }
 function Get-HVVirtualCenter     { Invoke-HVRest -Path '/v1/monitor/virtual-centers' }
