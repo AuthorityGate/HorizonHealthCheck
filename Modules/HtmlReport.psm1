@@ -104,13 +104,29 @@ function New-HVReport {
 
     $generated = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
 
-    # Tally findings by severity
-    $sevCounts = [ordered]@{ P1 = 0; P2 = 0; P3 = 0; Info = 0 }
+    # Tally findings by severity. OK = plugins that ran clean (no error,
+    # zero detail rows, or detail rows produced exclusively by 'show all
+    # entities' dashboards where every row is in OK status). For tile
+    # purposes any plugin with non-zero details counts toward its declared
+    # severity; only plugins with zero rows AND no error count as OK.
+    $sevCounts = [ordered]@{ P1 = 0; P2 = 0; P3 = 0; Info = 0; OK = 0 }
     foreach ($r in $Results) {
-        if ($r.Details -and (@($r.Details)).Count -gt 0 -and $sevCounts.Contains($r.Severity)) {
+        $cnt = 0; if ($r.Details) { $cnt = @($r.Details).Count }
+        if ($r.Error) {
+            # Errors always count as P1 in the tile so the operator notices
+            if ($sevCounts.Contains('P1')) { $sevCounts['P1']++ }
+            continue
+        }
+        if ($cnt -eq 0) {
+            $sevCounts['OK']++
+        } elseif ($sevCounts.Contains($r.Severity)) {
             $sevCounts[$r.Severity]++
+        } else {
+            $sevCounts['Info']++
         }
     }
+    $totalCount = 0
+    foreach ($k in $sevCounts.Keys) { $totalCount += $sevCounts[$k] }
 
     $css = @'
 <style>
@@ -122,13 +138,21 @@ function New-HVReport {
   header .meta{font-size:12px;color:#1c1e21;margin-top:4px;}
   header a.site{color:#000000;text-decoration:none;border-bottom:1px dotted #1c1e21;font-weight:600;}
   header a.site:hover{opacity:.85;}
-  .summary{display:flex;gap:12px;padding:20px 28px;background:#fff;border-bottom:1px solid #ddd;}
-  .badge{padding:10px 16px;border-radius:6px;color:#fff;min-width:90px;text-align:center;}
+  .summary{display:flex;gap:12px;padding:20px 28px;background:#fff;border-bottom:1px solid #ddd;flex-wrap:wrap;}
+  .badge{padding:10px 16px;border-radius:6px;color:#fff;min-width:90px;text-align:center;
+         border:none;font-family:inherit;font-size:13px;cursor:pointer;
+         transition:transform .08s ease, box-shadow .15s ease, opacity .15s ease;
+         opacity:.92;}
+  .badge:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(0,0,0,.18);opacity:1;}
+  .badge.active{outline:3px solid #1c1e21;outline-offset:2px;opacity:1;
+                box-shadow:0 4px 12px rgba(0,0,0,.22);}
   .badge .n{font-size:24px;font-weight:600;display:block;}
+  .badge.all{background:#34495e;}
   .badge.p1{background:#c0392b;}
   .badge.p2{background:#e67e22;}
   .badge.p3{background:#f1c40f;color:#222;}
   .badge.info{background:#3498db;}
+  .badge.ok{background:#27ae60;}
   .toc{padding:14px 28px;background:#fff;border-bottom:1px solid #ddd;}
   .toc a{margin-right:14px;text-decoration:none;color:#0a3d62;font-size:13px;}
   section.cat{padding:14px 28px;border-top:1px solid #ddd;}
@@ -184,11 +208,14 @@ function New-HVReport {
         $backendsLine,
         $generated)
 
-    # Summary tiles
+    # Summary tiles - clickable filters. Click a tile to show only findings
+    # of that severity; click ALL to clear the filter. Default state on
+    # page load is ALL (every finding visible).
     [void]$sb.Append("<div class='summary'>")
+    [void]$sb.AppendFormat("<button type='button' class='badge all active' data-filter='ALL'><span class='n'>{0}</span>ALL</button>", $totalCount)
     foreach ($k in $sevCounts.Keys) {
         $cls = $k.ToLower()
-        [void]$sb.AppendFormat("<div class='badge {0}'><span class='n'>{1}</span>{2}</div>", $cls, $sevCounts[$k], $k)
+        [void]$sb.AppendFormat("<button type='button' class='badge {0}' data-filter='{1}'><span class='n'>{2}</span>{1}</button>", $cls, $k, $sevCounts[$k])
     }
     [void]$sb.Append("</div>")
 
@@ -260,7 +287,44 @@ function New-HVReport {
         [void]$sb.Append("</section>")
     }
 
-    [void]$sb.Append("<footer>Horizon HealthCheck &middot; <a href='https://www.authoritygate.com' target='_blank'>AuthorityGate</a></footer></body></html>")
+    [void]$sb.Append("<footer>Horizon HealthCheck &middot; <a href='https://www.authoritygate.com' target='_blank'>AuthorityGate</a></footer>")
+
+    # Severity-filter behavior: clicking a summary tile narrows the visible
+    # findings to that severity. Clicking ALL shows everything. Category
+    # sections with no visible plugins are hidden, as are TOC links to
+    # those sections, so the report stays tidy at every filter state.
+    [void]$sb.Append(@"
+<script>
+(function(){
+  function applyFilter(f) {
+    document.querySelectorAll('.badge[data-filter]').forEach(function(b){
+      b.classList.toggle('active', b.dataset.filter === f);
+    });
+    document.querySelectorAll('details.plugin').forEach(function(p){
+      var s = p.getAttribute('data-sev') || '';
+      p.style.display = (f === 'ALL' || s === f) ? '' : 'none';
+    });
+    document.querySelectorAll('section.cat').forEach(function(sec){
+      var anyVisible = false;
+      sec.querySelectorAll('details.plugin').forEach(function(p){
+        if (p.style.display !== 'none') anyVisible = true;
+      });
+      sec.style.display = anyVisible ? '' : 'none';
+      var id = sec.id || '';
+      if (id) {
+        document.querySelectorAll('.toc a[href="#' + id + '"]').forEach(function(a){
+          a.style.display = anyVisible ? '' : 'none';
+        });
+      }
+    });
+  }
+  document.querySelectorAll('.badge[data-filter]').forEach(function(b){
+    b.addEventListener('click', function(){ applyFilter(b.dataset.filter); });
+  });
+})();
+</script>
+"@)
+    [void]$sb.Append("</body></html>")
     $sb.ToString()
 }
 

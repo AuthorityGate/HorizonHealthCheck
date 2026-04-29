@@ -17,6 +17,10 @@ $out = [pscustomobject]@{
     PowerCLIInstalled = $false
     PowerCLIVersion = $null
     WordInstalled   = $false
+    RsatActiveDirectory = $false
+    RsatGroupPolicy = $false
+    RsatDnsServer   = $false
+    RsatDhcpServer  = $false
     AllRequiredOk   = $false
     Missing         = @()
 }
@@ -62,6 +66,17 @@ try {
         Where-Object { $_.DisplayName -like 'Microsoft Office*' -or $_.DisplayName -like 'Microsoft 365*' }
     $out.WordInstalled = [bool]$word
 } catch { }
+
+# 7. RSAT modules - informational. Not blocking (a vCenter-only run does
+# not need them); flagged in Missing so the GUI can prompt the operator.
+$out.RsatActiveDirectory = [bool](Get-Module -ListAvailable ActiveDirectory -ErrorAction SilentlyContinue)
+$out.RsatGroupPolicy     = [bool](Get-Module -ListAvailable GroupPolicy     -ErrorAction SilentlyContinue)
+$out.RsatDnsServer       = [bool](Get-Module -ListAvailable DnsServer       -ErrorAction SilentlyContinue)
+$out.RsatDhcpServer      = [bool](Get-Module -ListAvailable DhcpServer      -ErrorAction SilentlyContinue)
+foreach ($n in @('ActiveDirectory','GroupPolicy','DnsServer','DhcpServer')) {
+    $field = "Rsat$n"
+    if (-not $out.$field) { $out.Missing += "RSAT-$n" }
+}
 
 $out.AllRequiredOk = $out.PowerShellOk -and $out.PowerCLIInstalled
 $out

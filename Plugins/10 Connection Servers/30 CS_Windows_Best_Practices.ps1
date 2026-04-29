@@ -13,12 +13,19 @@ $Recommendation = "Each row names a CS + a finding + the fix. Address the highes
 
 if (-not (Get-HVRestSession)) { return }
 
-$modulePath = Join-Path (Split-Path -Parent $PSScriptRoot) -ChildPath '..\Modules\InfraServerScan.psm1'
-if (-not (Test-Path $modulePath)) {
-    [pscustomobject]@{ Server='(plugin error)'; Rule='InfraServerScan.psm1 not found'; Detail="Expected at $modulePath"; Fix='Reinstall HealthCheckPS1.' }
-    return
+# InfraServerScan is imported globally by the runspace at startup. Fall
+# back to a runtime import via $Global:HVRoot only if the function is
+# missing - guards against ZIP extractions that nested Plugins\Plugins\
+# (the old Split-Path-Parent $PSScriptRoot math broke in that layout).
+if (-not (Get-Command -Name 'Invoke-WindowsBestPracticeProbe' -ErrorAction SilentlyContinue)) {
+    $modPath = $null
+    if ($Global:HVRoot) { $modPath = Join-Path $Global:HVRoot 'Modules\InfraServerScan.psm1' }
+    if ((-not $modPath) -or (-not (Test-Path $modPath))) {
+        [pscustomobject]@{ Server='(plugin error)'; Rule='InfraServerScan.psm1 not loaded'; Detail="Expected via Global:HVRoot but module not found. Reinstall or re-run RunGUI."; Fix='Reinstall HealthCheckPS1.' }
+        return
+    }
+    Import-Module $modPath -Force -ErrorAction SilentlyContinue
 }
-Import-Module $modulePath -Force
 
 # Discover CS servers via Horizon REST
 $servers = New-Object System.Collections.Generic.HashSet[string]

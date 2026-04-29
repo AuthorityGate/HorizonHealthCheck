@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.45'
+$Script:HealthCheckVersion = '0.93.46'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3523,6 +3523,12 @@ $btnRun.Add_Click({
             Import-Module (Join-Path $rootPath 'Modules\UAGRest.psm1')        -Force
             Import-Module (Join-Path $rootPath 'Modules\NSXRest.psm1')        -Force
             Import-Module (Join-Path $rootPath 'Modules\VeeamRest.psm1')      -Force -ErrorAction SilentlyContinue
+            Import-Module (Join-Path $rootPath 'Modules\InfraServerScan.psm1') -Force -ErrorAction SilentlyContinue
+            Import-Module (Join-Path $rootPath 'Modules\GuestImageScan.psm1')  -Force -ErrorAction SilentlyContinue
+            # Expose the resolved root to plugins as $Global:HVRoot so they
+            # can locate sibling modules without their own path arithmetic
+            # (which has bitten us when ZIP extractions create nested folders).
+            $Global:HVRoot = $rootPath
 
             $hvSession = $null; $vcConnected = $false; $avSession = $null; $uagSession = $null; $nsxSession = $null
             $ntnxSessions = @{}; $ntnxSession = $null

@@ -13,12 +13,15 @@ $Recommendation = "Each row names an AVM + a finding + the fix. Group fixes by A
 
 if (-not (Get-AVRestSession)) { return }
 
-$modulePath = Join-Path (Split-Path -Parent $PSScriptRoot) -ChildPath '..\Modules\InfraServerScan.psm1'
-if (-not (Test-Path $modulePath)) {
-    [pscustomobject]@{ Server='(plugin error)'; Rule='InfraServerScan.psm1 not found'; Detail="Expected at $modulePath"; Fix='Reinstall HealthCheckPS1.' }
-    return
+if (-not (Get-Command -Name 'Get-InfraServerScan' -ErrorAction SilentlyContinue)) {
+    $modPath = $null
+    if ($Global:HVRoot) { $modPath = Join-Path $Global:HVRoot 'Modules\InfraServerScan.psm1' }
+    if ((-not $modPath) -or (-not (Test-Path $modPath))) {
+        [pscustomobject]@{ Server='(plugin error)'; Rule='InfraServerScan.psm1 not loaded'; Detail="Module not available via Global:HVRoot. Reinstall HealthCheckPS1."; Fix='Reinstall HealthCheckPS1.' }
+        return
+    }
+    Import-Module $modPath -Force -ErrorAction SilentlyContinue
 }
-Import-Module $modulePath -Force
 
 # Discover AVM servers
 $servers = New-Object System.Collections.Generic.HashSet[string]

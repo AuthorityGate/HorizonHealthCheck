@@ -169,6 +169,48 @@ if (-not $SkipPowerCLI) {
     Write-Warn2 'Skipped (-SkipPowerCLI). vCenter / vSAN / Lifecycle / Hardware plugin categories will not run.'
 }
 
+# --- 5b. RSAT modules (DnsServer / DhcpServer / ActiveDirectory / GPMC) -----
+# The B3 AD + B4 DNS/DHCP plugins call cmdlets from these RSAT modules. RSAT
+# is NOT a PSGallery module - it is a Windows Optional Feature. Best-effort
+# install requires elevation; we don't fail the whole bootstrap if RSAT
+# can't be added (the operator may not be running as admin, or may be on
+# a Server core build). Each module installs independently so a missing
+# DnsServer doesn't block ActiveDirectory.
+Write-Step 'RSAT (ActiveDirectory / GroupPolicy / DnsServer / DhcpServer)'
+$rsatTargets = @(
+    @{ Cap='Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0'; Module='ActiveDirectory' }
+    @{ Cap='Rsat.GroupPolicy.Management.Tools~~~~0.0.1.0'; Module='GroupPolicy' }
+    @{ Cap='Rsat.Dns.Tools~~~~0.0.1.0';                    Module='DnsServer' }
+    @{ Cap='Rsat.DHCP.Tools~~~~0.0.1.0';                   Module='DhcpServer' }
+)
+$rsatMissing = @($rsatTargets | Where-Object { -not (Get-Module -ListAvailable $_.Module -ErrorAction SilentlyContinue) })
+if ($rsatMissing.Count -eq 0) {
+    Write-Ok "All RSAT modules already loadable: $(($rsatTargets.Module) -join ', ')"
+} elseif (-not $isAdmin) {
+    Write-Warn2 "RSAT install requires elevation; running as standard user. Missing: $(($rsatMissing.Module) -join ', ')"
+    Write-Host '  To install: right-click PowerShell -> Run as Administrator -> .\Tools\Install-RSAT.ps1' -ForegroundColor Yellow
+    Write-Host '  Server alternative: Install-WindowsFeature RSAT-AD-PowerShell,RSAT-DNS-Server,RSAT-DHCP,GPMC' -ForegroundColor Yellow
+} else {
+    foreach ($r in $rsatMissing) {
+        try {
+            $cap = Get-WindowsCapability -Online -Name $r.Cap -ErrorAction Stop
+            if ($cap.State -eq 'Installed') {
+                Write-Ok "$($r.Module) already Installed at OS level (reload PowerShell to make it loadable)."
+            } else {
+                Add-WindowsCapability -Online -Name $r.Cap -ErrorAction Stop | Out-Null
+                Write-Ok "$($r.Module) installed via $($r.Cap)."
+            }
+        } catch {
+            Write-Warn2 "$($r.Module) install failed: $($_.Exception.Message)"
+        }
+    }
+    # Check what is now loadable
+    $stillMissing = @($rsatTargets | Where-Object { -not (Get-Module -ListAvailable $_.Module -ErrorAction SilentlyContinue) })
+    if ($stillMissing.Count -gt 0) {
+        Write-Warn2 "Open a NEW PowerShell session for these to become loadable: $(($stillMissing.Module) -join ', ')"
+    }
+}
+
 # --- 6. .NET / Word availability (informational) ----------------------------
 Write-Step 'Word automation availability (optional)'
 $wordKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
