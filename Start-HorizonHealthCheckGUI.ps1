@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.46'
+$Script:HealthCheckVersion = '0.93.47'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1134,13 +1134,110 @@ $btnLicRefresh.Location = New-Object System.Drawing.Point(348, 156)
 $btnLicRefresh.Size     = New-Object System.Drawing.Size(80, 32)
 $tabLic.Controls.Add($btnLicRefresh)
 
+# ---- Telemetry diagnostics panel ----
+# The user's license JWT authenticates EVERY usage event, with no client-
+# side run counter. Each scan submits to /api/usage with a unique run_id,
+# so the same key sends unlimited telemetry. This panel makes that
+# guarantee visible: queue depth, last-result, manual flush button.
+$grpTele = New-Object System.Windows.Forms.GroupBox
+$grpTele.Text = ' Telemetry / Usage Submission '
+$grpTele.Location = New-Object System.Drawing.Point(12, 200)
+$grpTele.Size     = New-Object System.Drawing.Size(840, 120)
+$grpTele.Font     = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+$tabLic.Controls.Add($grpTele)
+
+$lblTeleHelp = New-Object System.Windows.Forms.Label
+$lblTeleHelp.Location = New-Object System.Drawing.Point(14, 22)
+$lblTeleHelp.Size     = New-Object System.Drawing.Size(810, 36)
+$lblTeleHelp.Font     = New-Object System.Drawing.Font('Segoe UI', 8)
+$lblTeleHelp.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+$lblTeleHelp.Text     = 'Your license JWT authenticates every telemetry event - the same key submits unlimited runs. Each scan ships a unique run_id to /api/usage. Failed submissions queue locally and retry automatically on the next scan; click Flush Queue Now to push them immediately.'
+$grpTele.Controls.Add($lblTeleHelp)
+
+$lblTeleStatus = New-Object System.Windows.Forms.Label
+$lblTeleStatus.Location = New-Object System.Drawing.Point(14, 62)
+$lblTeleStatus.Size     = New-Object System.Drawing.Size(540, 22)
+$lblTeleStatus.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
+$lblTeleStatus.Text     = 'Queue: (refreshing...)'
+$grpTele.Controls.Add($lblTeleStatus)
+
+$btnTeleFlush = New-Object System.Windows.Forms.Button
+$btnTeleFlush.Text = 'Flush Queue Now'
+$btnTeleFlush.Location = New-Object System.Drawing.Point(560, 60)
+$btnTeleFlush.Size     = New-Object System.Drawing.Size(140, 26)
+$grpTele.Controls.Add($btnTeleFlush)
+
+$btnTeleOpenFolder = New-Object System.Windows.Forms.Button
+$btnTeleOpenFolder.Text = 'Open Queue Folder'
+$btnTeleOpenFolder.Location = New-Object System.Drawing.Point(706, 60)
+$btnTeleOpenFolder.Size     = New-Object System.Drawing.Size(120, 26)
+$grpTele.Controls.Add($btnTeleOpenFolder)
+
+$lblTeleResult = New-Object System.Windows.Forms.Label
+$lblTeleResult.Location = New-Object System.Drawing.Point(14, 92)
+$lblTeleResult.Size     = New-Object System.Drawing.Size(810, 20)
+$lblTeleResult.Font     = New-Object System.Drawing.Font('Segoe UI', 8)
+$lblTeleResult.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+$lblTeleResult.Text     = ''
+$grpTele.Controls.Add($lblTeleResult)
+
+$Script:UpdateTeleStatus = {
+    try {
+        $queueDir = Get-AGUsageQueueFolder
+        $files = @()
+        if (Test-Path $queueDir) { $files = @(Get-ChildItem -Path $queueDir -Filter '*.json' -File -ErrorAction SilentlyContinue) }
+        $depth = $files.Count
+        if ($depth -eq 0) {
+            $lblTeleStatus.Text = "Queue: 0 pending events. Ready to submit on next scan."
+            $lblTeleStatus.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+        } else {
+            $oldest = ($files | Sort-Object LastWriteTime | Select-Object -First 1).LastWriteTime
+            $lblTeleStatus.Text = "Queue: $depth pending event(s). Oldest queued: $($oldest.ToString('yyyy-MM-dd HH:mm'))."
+            $lblTeleStatus.ForeColor = [System.Drawing.Color]::FromArgb(212, 168, 42)
+        }
+    } catch {
+        $lblTeleStatus.Text = "Queue check failed: $($_.Exception.Message)"
+        $lblTeleStatus.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+    }
+}
+
+$btnTeleFlush.Add_Click({
+    $lblTeleResult.Text = 'Flushing queue...'
+    $lblTeleResult.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+    $tabLic.Refresh()
+    try {
+        $r = Submit-AGUsageQueue
+        $lblTeleResult.Text = "Drained $($r.Drained) event(s); $($r.Remaining) still queued."
+        $lblTeleResult.ForeColor = if ($r.Remaining -eq 0) {
+            [System.Drawing.Color]::FromArgb(39, 174, 96)
+        } else {
+            [System.Drawing.Color]::FromArgb(212, 168, 42)
+        }
+    } catch {
+        $lblTeleResult.Text = "Flush failed: $($_.Exception.Message)"
+        $lblTeleResult.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+    }
+    & $Script:UpdateTeleStatus
+})
+
+$btnTeleOpenFolder.Add_Click({
+    try {
+        $queueDir = Get-AGUsageQueueFolder
+        if (-not (Test-Path $queueDir)) { New-Item -ItemType Directory -Path $queueDir -Force | Out-Null }
+        Start-Process explorer.exe $queueDir
+    } catch {
+        $lblTeleResult.Text = "Open folder failed: $($_.Exception.Message)"
+        $lblTeleResult.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
+    }
+})
+
 # Refresh the status display from the on-disk license.
 $Script:UpdateLicenseDisplay = {
     try {
         $r = Get-AGLicense
         if ($r.Valid) {
             $daysLeft = if ($r.ExpiresAt) { [math]::Round(($r.ExpiresAt - (Get-Date)).TotalHours / 24, 1) } else { 0 }
-            $lblLicStatus.Text = "Status: ACTIVE - $daysLeft day(s) remaining"
+            $lblLicStatus.Text = "Status: ACTIVE - $daysLeft day(s) remaining (one license -> unlimited submissions)"
             $lblLicStatus.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
             $lblLicEmail.Text = "Licensed to: $($r.Claims.sub)"
             $lblLicExp.Text   = "Expires: $($r.ExpiresAt) (UTC)"
@@ -1154,6 +1251,7 @@ $Script:UpdateLicenseDisplay = {
         $lblLicStatus.Text = "Status: License module error - $($_.Exception.Message)"
         $lblLicStatus.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
     }
+    try { & $Script:UpdateTeleStatus } catch { }
 }
 & $Script:UpdateLicenseDisplay
 
@@ -4365,7 +4463,7 @@ $btnRun.Add_Click({
                     run_id              = $runId
                     machine_fp          = $machineFp
                     hostname            = $env:COMPUTERNAME
-                    tool_version        = '2.0.0'
+                    tool_version        = "$runspaceVersion"
                     started_at          = if ($runStartedAt) { [int]([DateTimeOffset]$runStartedAt).ToUnixTimeSeconds() } else { 0 }
                     completed_at        = [int]([DateTimeOffset]$completedAt).ToUnixTimeSeconds()
                     duration_seconds    = $duration

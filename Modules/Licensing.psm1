@@ -594,6 +594,7 @@ Export-ModuleMember -Function `
     Get-AGFingerprintCachePath, `
     Get-AGLicenseStorePath, `
     Get-AGLicenseFilePath, `
+    Get-AGUsageQueueFolder, `
     Get-AGLicense, `
     Save-AGLicense, `
     Test-AGLicenseToken, `
