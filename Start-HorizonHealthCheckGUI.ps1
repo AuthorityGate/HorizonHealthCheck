@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.36'
+$Script:HealthCheckVersion = '0.93.37'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -784,6 +784,65 @@ function New-PanelControls($parent, $hasUserDomain=$true) {
     $parent.Controls.Add($ctrls.Test)
 
     $ctrls
+}
+
+# ---- Lightweight modal helpers (defined BEFORE any handler that calls them
+# so the function is in the script scope at click time, regardless of where
+# the closure was registered). Read-NameDialog returns a single text value;
+# Read-PassphraseDialog returns a SecureString.
+function Read-NameDialog {
+    param([string]$Title='Input', [string]$Prompt='Enter value', [string]$DefaultValue='')
+    $d = New-Object System.Windows.Forms.Form
+    $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(500, 180)
+    $d.StartPosition = 'CenterParent'; $d.FormBorderStyle = 'Sizable'; $d.MaximizeBox = $true; $d.AutoScroll = $true; $d.MinimumSize = New-Object System.Drawing.Size(360, 140)
+    $d.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Prompt; $lbl.Location = New-Object System.Drawing.Point(14, 14); $lbl.Size = New-Object System.Drawing.Size(460, 40)
+    $d.Controls.Add($lbl)
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Location = New-Object System.Drawing.Point(14, 60); $tb.Size = New-Object System.Drawing.Size(460, 22)
+    $tb.Text = $DefaultValue
+    $d.Controls.Add($tb)
+    $script:nameResult = $null
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Text = 'OK'; $btnOk.Location = New-Object System.Drawing.Point(304, 100); $btnOk.Size = New-Object System.Drawing.Size(80, 28)
+    $btnOk.Add_Click({ $script:nameResult = $tb.Text; $d.DialogResult = 'OK'; $d.Close() })
+    $d.Controls.Add($btnOk); $d.AcceptButton = $btnOk
+    $btnNo = New-Object System.Windows.Forms.Button
+    $btnNo.Text = 'Cancel'; $btnNo.Location = New-Object System.Drawing.Point(394, 100); $btnNo.Size = New-Object System.Drawing.Size(80, 28)
+    $btnNo.Add_Click({ $d.DialogResult = 'Cancel'; $d.Close() })
+    $d.Controls.Add($btnNo); $d.CancelButton = $btnNo
+    [void]$d.ShowDialog()
+    return $script:nameResult
+}
+
+function Read-PassphraseDialog {
+    param([string]$Title='Passphrase', [string]$Prompt='Enter passphrase')
+    $d = New-Object System.Windows.Forms.Form
+    $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(460, 180)
+    $d.StartPosition = 'CenterParent'; $d.FormBorderStyle = 'Sizable'; $d.MaximizeBox = $true; $d.AutoScroll = $true; $d.MinimumSize = New-Object System.Drawing.Size(360, 140)
+    $d.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $Prompt; $lbl.Location = New-Object System.Drawing.Point(14, 14); $lbl.Size = New-Object System.Drawing.Size(420, 40)
+    $d.Controls.Add($lbl)
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Location = New-Object System.Drawing.Point(14, 60); $tb.Size = New-Object System.Drawing.Size(420, 22)
+    $tb.UseSystemPasswordChar = $true
+    $d.Controls.Add($tb)
+    $script:ppResult = $null
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Text = 'OK'; $btnOk.Location = New-Object System.Drawing.Point(264, 100); $btnOk.Size = New-Object System.Drawing.Size(80, 28)
+    $btnOk.Add_Click({
+        if ($tb.Text) { $script:ppResult = (ConvertTo-SecureString $tb.Text -AsPlainText -Force) }
+        $d.DialogResult = 'OK'; $d.Close()
+    })
+    $d.Controls.Add($btnOk)
+    $btnNo = New-Object System.Windows.Forms.Button
+    $btnNo.Text = 'Cancel'; $btnNo.Location = New-Object System.Drawing.Point(354, 100); $btnNo.Size = New-Object System.Drawing.Size(80, 28)
+    $btnNo.Add_Click({ $d.DialogResult = 'Cancel'; $d.Close() })
+    $d.Controls.Add($btnNo)
+    [void]$d.ShowDialog()
+    return $script:ppResult
 }
 
 # ---- Profile picker / saver wireup --------------------------------------
@@ -2509,61 +2568,6 @@ Thank you.
     $d.Controls.Add($btnClose)
 
     [void]$d.ShowDialog()
-}
-
-function Read-NameDialog {
-    param([string]$Title='Input', [string]$Prompt='Enter value', [string]$DefaultValue='')
-    $d = New-Object System.Windows.Forms.Form
-    $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(500, 180)
-    $d.StartPosition = 'CenterParent'; $d.FormBorderStyle = 'Sizable'; $d.MaximizeBox = $true; $d.AutoScroll = $true; $d.MinimumSize = New-Object System.Drawing.Size(360, 140)
-    $d.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = $Prompt; $lbl.Location = New-Object System.Drawing.Point(14, 14); $lbl.Size = New-Object System.Drawing.Size(460, 40)
-    $d.Controls.Add($lbl)
-    $tb = New-Object System.Windows.Forms.TextBox
-    $tb.Location = New-Object System.Drawing.Point(14, 60); $tb.Size = New-Object System.Drawing.Size(460, 22)
-    $tb.Text = $DefaultValue
-    $d.Controls.Add($tb)
-    $script:nameResult = $null
-    $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text = 'OK'; $btnOk.Location = New-Object System.Drawing.Point(304, 100); $btnOk.Size = New-Object System.Drawing.Size(80, 28)
-    $btnOk.Add_Click({ $script:nameResult = $tb.Text; $d.DialogResult = 'OK'; $d.Close() })
-    $d.Controls.Add($btnOk); $d.AcceptButton = $btnOk
-    $btnNo = New-Object System.Windows.Forms.Button
-    $btnNo.Text = 'Cancel'; $btnNo.Location = New-Object System.Drawing.Point(394, 100); $btnNo.Size = New-Object System.Drawing.Size(80, 28)
-    $btnNo.Add_Click({ $d.DialogResult = 'Cancel'; $d.Close() })
-    $d.Controls.Add($btnNo); $d.CancelButton = $btnNo
-    [void]$d.ShowDialog($form)
-    return $script:nameResult
-}
-
-function Read-PassphraseDialog {
-    param([string]$Title='Passphrase', [string]$Prompt='Enter passphrase')
-    $d = New-Object System.Windows.Forms.Form
-    $d.Text = $Title; $d.Size = New-Object System.Drawing.Size(460, 180)
-    $d.StartPosition = 'CenterParent'; $d.FormBorderStyle = 'Sizable'; $d.MaximizeBox = $true; $d.AutoScroll = $true; $d.MinimumSize = New-Object System.Drawing.Size(360, 140)
-    $d.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = $Prompt; $lbl.Location = New-Object System.Drawing.Point(14, 14); $lbl.Size = New-Object System.Drawing.Size(420, 40)
-    $d.Controls.Add($lbl)
-    $tb = New-Object System.Windows.Forms.TextBox
-    $tb.Location = New-Object System.Drawing.Point(14, 60); $tb.Size = New-Object System.Drawing.Size(420, 22)
-    $tb.UseSystemPasswordChar = $true
-    $d.Controls.Add($tb)
-    $script:ppResult = $null
-    $btnOk = New-Object System.Windows.Forms.Button
-    $btnOk.Text = 'OK'; $btnOk.Location = New-Object System.Drawing.Point(264, 100); $btnOk.Size = New-Object System.Drawing.Size(80, 28)
-    $btnOk.Add_Click({
-        if ($tb.Text) { $script:ppResult = (ConvertTo-SecureString $tb.Text -AsPlainText -Force) }
-        $d.DialogResult = 'OK'; $d.Close()
-    })
-    $d.Controls.Add($btnOk)
-    $btnNo = New-Object System.Windows.Forms.Button
-    $btnNo.Text = 'Cancel'; $btnNo.Location = New-Object System.Drawing.Point(354, 100); $btnNo.Size = New-Object System.Drawing.Size(80, 28)
-    $btnNo.Add_Click({ $d.DialogResult = 'Cancel'; $d.Close() })
-    $d.Controls.Add($btnNo)
-    [void]$d.ShowDialog($form)
-    return $script:ppResult
 }
 
 $btnGold = New-Object System.Windows.Forms.Button
