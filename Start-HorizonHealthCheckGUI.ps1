@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.60'
+$Script:HealthCheckVersion = '0.93.61'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1524,7 +1524,7 @@ $cAD.Use.Checked  = $state.UseAD
 $tabAD.Controls.Add($cAD.Use)
 
 $lblADHdr = New-Object System.Windows.Forms.Label
-$lblADHdr.Text = "DC/Server is the FQDN of the DC or DNS server the runner can reach (e.g. 'AGIADDNS01.authoritygate.net'). Forest is the forest identity (e.g. 'authoritygate.net') and can be left blank to auto-discover. Credential is optional - blank = current Windows user."
+$lblADHdr.Text = "DC/Server is the FQDN of the DC or DNS server the runner can reach (e.g. 'dc01.example.local'). Forest is the forest identity (e.g. 'example.local') and can be left blank to auto-discover. Credential is optional - blank = current Windows user."
 $lblADHdr.Location = New-Object System.Drawing.Point(20, 44); $lblADHdr.Size = New-Object System.Drawing.Size(620, 32)
 $lblADHdr.ForeColor = [System.Drawing.Color]::FromArgb(96, 96, 96)
 $lblADHdr.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
@@ -1628,9 +1628,9 @@ foreach ($e in @($state.ADForests)) {
 # Wire click handlers to the buttons created above (above the grid).
 
 $cAD.BtnAdd.Add_Click({
-    $dc = Read-NameDialog -Title 'Add DC / DNS server' -Prompt "Reachable DC or DNS server FQDN (e.g. 'AGIADDNS01.authoritygate.net'):" -DefaultValue ''
+    $dc = Read-NameDialog -Title 'Add DC / DNS server' -Prompt "Reachable DC or DNS server FQDN (e.g. 'dc01.example.local'):" -DefaultValue ''
     if (-not $dc) { return }
-    $f = Read-NameDialog -Title 'Forest FQDN (optional)' -Prompt "Forest FQDN (e.g. 'authoritygate.net'). Leave blank to auto-discover from the DC above:" -DefaultValue ''
+    $f = Read-NameDialog -Title 'Forest FQDN (optional)' -Prompt "Forest FQDN (e.g. 'example.local'). Leave blank to auto-discover from the DC above:" -DefaultValue ''
     [void]$cAD.Grid.Rows.Add($dc.Trim(), ($(if ($f) { $f.Trim() } else { '' })), '', '')
     Update-ADStatusLabel
 })
@@ -1678,21 +1678,29 @@ $cAD.BtnTest.Add_Click({
     param($s,$e)
     $g = $s.Tag.Grid
     if (-not $g) { return }
+    if ($g.Rows.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("No forests configured yet. Click 'Add forest...' first to add a DC/DNS server FQDN.", 'Test forests', 'OK', 'Information') | Out-Null
+        return
+    }
     if (-not (Get-Module -ListAvailable ActiveDirectory)) {
-        [System.Windows.Forms.MessageBox]::Show('RSAT ActiveDirectory module is not installed - cannot test.', 'Test forests', 'OK', 'Warning') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("RSAT ActiveDirectory module is not installed on this runner. Click 'Install RSAT now...' below the grid, then close + reopen the GUI before testing.", 'Test forests', 'OK', 'Warning') | Out-Null
         return
     }
     Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
+    $okCount = 0; $failCount = 0
     foreach ($row in $g.Rows) {
         $dc = [string]$row.Cells['colDC'].Value
         $forest = [string]$row.Cells['colForest'].Value
         $cp = [string]$row.Cells['colCred'].Value
-        if (-not $dc) { $row.Cells['colStatus'].Value = '(no DC FQDN)'; continue }
+        if (-not $dc) { $row.Cells['colStatus'].Value = '(no DC FQDN)'; $failCount++; continue }
         $row.Cells['colStatus'].Value = 'testing...'
+        [System.Windows.Forms.Application]::DoEvents()
         $adArgs = @{ Server = $dc; ErrorAction = 'Stop' }
         if ($cp) {
             try { $adArgs.Credential = Get-AGCredentialAsPSCredential -Name $cp } catch {
-                $row.Cells['colStatus'].Value = "cred decrypt failed: $($_.Exception.Message)"; continue
+                $row.Cells['colStatus'].Value = "cred decrypt failed: $($_.Exception.Message)"
+                $failCount++
+                continue
             }
         }
         try {
@@ -1704,11 +1712,14 @@ $cAD.BtnTest.Add_Click({
                 $statusMsg += " - WARNING: configured Forest '$forest' != DC's actual Forest '$($d.Forest)'"
             }
             $row.Cells['colStatus'].Value = $statusMsg
+            $okCount++
         } catch {
             $row.Cells['colStatus'].Value = "FAIL: $($_.Exception.Message)"
+            $failCount++
         }
     }
     Update-ADStatusLabel
+    [System.Windows.Forms.MessageBox]::Show("Tested $($g.Rows.Count) forest(s): $okCount OK, $failCount failed. See the Status column for per-row detail.", 'Test forests', 'OK', 'Information') | Out-Null
 })
 
 # RSAT presence + install button (moved here from the Specialized Scope
