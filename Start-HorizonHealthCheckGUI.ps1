@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.66'
+$Script:HealthCheckVersion = '0.93.67'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -4574,6 +4574,13 @@ $btnRun.Add_Click({
             # AD scope: prefer the dedicated AD tab list (per-row Server/Forest/CredProfile).
             # Falls back to the legacy specialized-scope single-forest field for backwards
             # compatibility when the AD tab is empty.
+            # CredentialProfiles MUST be imported before the AD-scope block since
+            # we call Get-AGCredentialAsPSCredential to decrypt the saved profile
+            # for the AD cmdlet -Credential parameter. Previously this import
+            # was below the block, so the call silently failed (catch swallowed
+            # 'command not recognized'), $cred stayed $null, AD plugins
+            # auth-failed with SSPI on non-domain-joined runners.
+            Import-Module (Join-Path $rootPath 'Modules\CredentialProfiles.psm1') -Force -Global -ErrorAction SilentlyContinue
             if ($adForests -and @($adForests).Count -gt 0) {
                 # Try to load the AD module up front so we can auto-discover
                 # forest FQDN from server when the operator left Forest blank.
@@ -4625,8 +4632,7 @@ $btnRun.Add_Click({
             # Per-VM credential override map flows in raw; plugin layer
             # resolves profile names to [pscredential]s on demand.
             if ($manualGoldImageCreds -and $manualGoldImageCreds.Count -gt 0)  { $Global:HVManualGoldImageCreds = $manualGoldImageCreds }
-            # Make CredentialProfiles available to the plugin layer too.
-            Import-Module (Join-Path $rootPath 'Modules\CredentialProfiles.psm1') -Force -Global -ErrorAction SilentlyContinue
+            # CredentialProfiles already imported above for the AD-scope block.
 
             # ---- Build the list of *connected* backends. A category whose
             # required backend isn't connected is skipped wholesale (its

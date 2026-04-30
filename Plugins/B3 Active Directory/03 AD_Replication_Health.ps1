@@ -23,11 +23,14 @@ if (-not $adAvailable) {
     return
 }
 
-$adArgs = @{ Server = $(if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }) }
-if (Test-Path Variable:Global:ADCredential) { $adArgs.Credential = $Global:ADCredential }
+# Get-ADReplicationPartnerMetadata uses -Target instead of -Server. Pass
+# only -Credential via the splat (Server isn't a valid parameter on this
+# cmdlet and would error out 'parameter cannot be found').
+$repArgs = @{}
+if (Test-Path Variable:Global:ADCredential) { $repArgs.Credential = $Global:ADCredential }
 
 try {
-    $partners = Get-ADReplicationPartnerMetadata -Target $Global:ADForestFqdn -Scope Forest @adArgs -ErrorAction Stop
+    $partners = Get-ADReplicationPartnerMetadata -Target $Global:ADForestFqdn -Scope Forest @repArgs -ErrorAction Stop
     foreach ($p in $partners) {
         $hasFailure = ($p.LastReplicationResult -ne 0) -or ($p.ConsecutiveReplicationFailures -gt 0)
         if ($hasFailure) {
