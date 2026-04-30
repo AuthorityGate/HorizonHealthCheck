@@ -600,18 +600,35 @@ function Get-HVConnectionServer {
     $monitor = @(Invoke-HVRest -Path '/v1/monitor/connection-servers')
     if (-not $monitor -or $monitor.Count -eq 0) { return @() }
 
-    # Try the LIST config endpoint first (newer Horizon).
+    # Try the LIST config endpoint first (newer Horizon). Includes /external/v1/
+    # for builds where /v1/config redirects to a stub-only endpoint.
+    # Richness check: if the response has <= 4 fields per item it's
+    # the same stub shape as /v1/monitor (id + jwt_info + jwt_support);
+    # keep trying alternates until we find one with name/version/etc.
     $configList = $null
-    foreach ($p in @('/v1/config/connection-servers','/v2/config/connection-servers','/config/v1/connection-servers')) {
+    foreach ($p in @(
+        '/v1/config/connection-servers',
+        '/v2/config/connection-servers',
+        '/config/v1/connection-servers',
+        '/external/v1/connection-servers',
+        '/v2/connection-servers'
+    )) {
         try {
-            $configList = @(Invoke-HVRest -Path $p -ErrorAction SilentlyContinue)
-            if ($configList -and $configList.Count -gt 0) { break }
-            $configList = $null
+            $resp = @(Invoke-HVRest -Path $p -ErrorAction SilentlyContinue)
+            if ($resp -and $resp.Count -gt 0) {
+                $first = $resp[0]
+                $fieldCount = if ($first.PSObject -and $first.PSObject.Properties) { @($first.PSObject.Properties).Count } else { 0 }
+                if ($fieldCount -gt 4) {
+                    $configList = $resp
+                    break
+                }
+                # else stub-only, keep trying
+            }
         } catch { }
     }
 
-    # Build {id -> configRow} map. Fall back to per-id detail when the
-    # list endpoint is unavailable (older Horizon or restricted scope).
+    # Build {id -> configRow} map. Fall back to per-id detail when no list
+    # endpoint returned a rich enough payload.
     $cfgMap = @{}
     if ($configList) {
         foreach ($c in $configList) {
@@ -620,10 +637,21 @@ function Get-HVConnectionServer {
     } else {
         foreach ($m in $monitor) {
             if (-not $m -or -not $m.id) { continue }
-            try {
-                $cfg = Invoke-HVRest -Path "/v1/config/connection-servers/$($m.id)" -NoPaging -ErrorAction SilentlyContinue
-                if ($cfg) { $cfgMap[$m.id] = $cfg }
-            } catch { }
+            $cfg = $null
+            foreach ($detailPath in @(
+                "/v1/config/connection-servers/$($m.id)",
+                "/v2/config/connection-servers/$($m.id)",
+                "/external/v1/connection-servers/$($m.id)"
+            )) {
+                try {
+                    $cfg = Invoke-HVRest -Path $detailPath -NoPaging -ErrorAction SilentlyContinue
+                    if ($cfg) {
+                        $fc = if ($cfg.PSObject -and $cfg.PSObject.Properties) { @($cfg.PSObject.Properties).Count } else { 0 }
+                        if ($fc -gt 4) { break } else { $cfg = $null }
+                    }
+                } catch { }
+            }
+            if ($cfg) { $cfgMap[$m.id] = $cfg }
         }
     }
 

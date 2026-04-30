@@ -22,12 +22,19 @@ function Resolve-HVPoolEntitlement {
         # Horizon 8.6+ inventory v2 - returns user/group objects directly
         @{ Path = "/v2/desktop-pools/$PoolId/users"; Mode = 'v2-users' }
         @{ Path = "/v2/desktop-pools/$PoolId/entitlements"; Mode = 'v2-entitlements' }
+        # 8.x external API surface (added v0.93.69 - some Horizon 8.6 builds
+        # expose entitlements only via /external/v1 even when /v1/* paths exist)
+        @{ Path = "/external/v1/entitlements?desktop_pool_id=$PoolId"; Mode = 'external-flat' }
+        @{ Path = "/external/v1/desktop-pools/$PoolId/entitlements"; Mode = 'external-pool-scoped' }
+        @{ Path = "/external/v1/desktop-pools/$PoolId/users"; Mode = 'external-users' }
         # 2206-2306 split endpoint
         @{ Path = "/v1/entitlements?desktop_pool_id=$PoolId"; Mode = 'v1-flat' }
         # Pre-2206 query-by-id form
         @{ Path = "/v1/entitlements/desktop-pools?id=$PoolId"; Mode = 'v1-legacy' }
         # Direct entitlements collection variant some builds expose
         @{ Path = "/v1/desktop-pools/$PoolId/entitlements"; Mode = 'pool-scoped' }
+        # inventory v1
+        @{ Path = "/inventory/v1/entitlements?desktop_pool_id=$PoolId"; Mode = 'inventory-flat' }
     )
     $lastError = $null
     foreach ($v in $variants) {

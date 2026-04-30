@@ -37,12 +37,17 @@ foreach ($c in $cs) {
     }
     $version = "$(Get-CSField $c @('version','cs_version','product_version','build_version'))"
     $build   = "$(Get-CSField $c @('build','build_number','build_id','product_build_number'))"
+    # Skip rows where the API didn't return a status at all - some Horizon
+    # 8.6 builds expose only id+jwt on /v1/monitor/connection-servers and
+    # don't have a /config endpoint that returns status. Treating empty
+    # status as "non-OK" produces false-positive '(unknown)' rows.
+    if (-not $status) { continue }
     $statusOk = ($status -eq 'OK')
     $repOk    = (-not $repl) -or ($repl -eq 'OK')
     if (-not ($statusOk -and $repOk)) {
         [pscustomobject]@{
             Name        = if ($name) { $name } else { '(unknown)' }
-            Status      = if ($status) { $status } else { '(unknown)' }
+            Status      = $status
             Replication = if ($repl) { $repl } else { '(none)' }
             Version     = $version
             Build       = $build

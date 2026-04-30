@@ -14,6 +14,16 @@ $Recommendation = "Upgrade lagging replicas to the same version+build as the res
 $cs = @(Get-HVConnectionServer)
 if (-not $cs -or $cs.Count -lt 2) { return }
 
+# Skip when no version data is exposed by the API at all - some Horizon 8.6
+# builds expose only id+jwt on /v1/monitor/connection-servers and don't have
+# a /config endpoint that returns version/build. Without version data we
+# can't compare drift; emitting 6 rows of '6 on this build' is noise.
+$haveVer = @($cs | Where-Object {
+    $v = if ($_.PSObject -and $_.PSObject.Properties['version']) { $_.PSObject.Properties['version'].Value } else { $null }
+    $v -and "$v" -ne ''
+})
+if ($haveVer.Count -eq 0) { return }
+
 # Resilient field lookup - 2206+ shapes sometimes return name under
 # host_name / display_name / dns_name and version under product_version.
 function Get-CSField { param($Obj,[string[]]$Names)
