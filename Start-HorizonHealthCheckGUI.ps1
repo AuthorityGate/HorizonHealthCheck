@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.69'
+$Script:HealthCheckVersion = '0.93.70'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -4352,6 +4352,11 @@ $btnRun.Add_Click({
             $hvSessions = @{}
             if ($hvServer) {
                 $hvList = @($hvServer -split '[,;]\s*' | Where-Object { $_.Trim() })
+                # Expose the operator-typed CS FQDN list to plugins so the
+                # WinRM-fallback CS Inventory plugin (10/06) can probe each
+                # CS directly when REST returns stub-only data on Horizon 8.6.
+                $Global:HVServer = $hvServer
+                $Global:HVConnectedFqdnList = $hvList
                 Log "[+] Horizon pod list: $($hvList -join ', ')"
                 foreach ($hvOne in $hvList) {
                     Log "[+] Probing Horizon $hvOne ..."

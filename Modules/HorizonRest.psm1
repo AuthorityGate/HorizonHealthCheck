@@ -657,6 +657,23 @@ function Get-HVConnectionServer {
 
     # Merge: every monitor row plus matching config row's properties (config
     # wins for name/version/build because monitor often doesn't carry them).
+    # Last-resort fallback: when no /config endpoint surfaced rich data
+    # (Horizon 8.6 here returns id+jwt-only on every variant), synthesize
+    # a 'name' on the connected CS at least, using the FQDN the operator
+    # typed in the Horizon tab. Plugins that read $c.name then have one
+    # real hostname instead of all GUIDs. Peer CS metadata still isn't
+    # available - that requires either a richer REST surface or the
+    # WinRM-based 'Connection Server Inventory (WinRM Fallback)' plugin.
+    $connectedFqdn = if ($Script:HVSession -and $Script:HVSession.Server) { $Script:HVSession.Server } else { $null }
+    $needSynthName = (-not $cfgMap -or $cfgMap.Count -eq 0)
+    if ($needSynthName -and $connectedFqdn -and $monitor.Count -gt 0) {
+        # Apply the connected FQDN to the FIRST record only; we can't
+        # safely guess peer FQDNs from REST alone.
+        Add-Member -InputObject $monitor[0] -NotePropertyName 'name' -NotePropertyValue $connectedFqdn -Force
+        Add-Member -InputObject $monitor[0] -NotePropertyName 'host_name' -NotePropertyValue $connectedFqdn -Force
+        Add-Member -InputObject $monitor[0] -NotePropertyName 'fqdn' -NotePropertyValue $connectedFqdn -Force
+    }
+
     foreach ($m in $monitor) {
         if (-not $m) { continue }
         $cfg = if ($m.id -and $cfgMap.ContainsKey($m.id)) { $cfgMap[$m.id] } else { $null }
