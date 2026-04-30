@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.65'
+$Script:HealthCheckVersion = '0.93.66'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3937,6 +3937,17 @@ $btnRun.Add_Click({
     if ($cUEM.Use.Checked  -and $uemFqdn)  { $active += 'WS1UEM' }
     if ($cUAG.Use.Checked  -and $uagFqdn)  { $active += 'UAG' }
     if ($cNSX.Use.Checked  -and $nsxFqdn)  { $active += 'NSX' }
+    # AD: shape is different (multi-row grid, no single Server textbox).
+    # Active when the Use checkbox is ticked AND at least one row has a
+    # populated DC FQDN. Lets AD run as the only target.
+    $adRowCount = 0
+    if ($cAD -and $cAD.Use.Checked -and $cAD.Grid) {
+        foreach ($r in $cAD.Grid.Rows) {
+            $dc = [string]$r.Cells['colDC'].Value
+            if ($dc -and $dc.Trim()) { $adRowCount++ }
+        }
+    }
+    if ($adRowCount -gt 0) { $active += 'AD' }
 
     # Also bail loudly if a Use checkbox is ticked but Server FQDN is empty
     # (clearer error than the generic "No active scope").
@@ -3947,6 +3958,7 @@ $btnRun.Add_Click({
     if ($cNTNX.Use.Checked -and -not $ntnxFqdn) { $tickedButEmpty += 'Nutanix' }
     if ($cUAG.Use.Checked  -and -not $uagFqdn)  { $tickedButEmpty += 'UAG' }
     if ($cNSX.Use.Checked  -and -not $nsxFqdn)  { $tickedButEmpty += 'NSX' }
+    if ($cAD -and $cAD.Use.Checked -and $adRowCount -eq 0) { $tickedButEmpty += 'AD (no forest rows added)' }
     if ($tickedButEmpty.Count -gt 0) {
         [System.Windows.Forms.MessageBox]::Show(
             ("Server FQDN is EMPTY for: " + ($tickedButEmpty -join ', ') + ".`r`n`r`nClick the tab(s) above and type the Server FQDN before clicking Run Health Check."),
@@ -4712,6 +4724,21 @@ $btnRun.Add_Click({
                 [pscustomobject]@{ Target='UAG';        ClickFQDN=$clickUAG; Readback=$rbUAG; RuntimeFQDN=$uagServer; Username=if ($uagCredential) { $uagCredential.UserName } else { '(none)' }; Attempted=([bool]$uagServer); Connected=([bool]$uagSession) }
                 [pscustomobject]@{ Target='NSX';        ClickFQDN=$clickNSX; Readback=$rbNSX; RuntimeFQDN=$nsxServer; Username=if ($nsxCredential) { $nsxCredential.UserName } else { '(none)' }; Attempted=([bool]$nsxServer); Connected=([bool]$nsxSession) }
             )
+            # AD doesn't have a 'session' object (ActiveDirectory cmdlets
+            # connect on each call). Count it as Attempted+Connected when the
+            # tab populated $Global:ADServerFqdn AND the auto-discovery import
+            # of the AD module succeeded.
+            $adAttempted = [bool]($Global:ADServerFqdn)
+            $adConnected = $adAttempted -and ([bool](Get-Module -Name ActiveDirectory))
+            $runCfg += [pscustomobject]@{
+                Target      = 'AD'
+                ClickFQDN   = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { '(none)' }
+                Readback    = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { '(none)' }
+                RuntimeFQDN = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { '' }
+                Username    = if ($Global:ADCredential) { $Global:ADCredential.UserName } else { '(current Windows user)' }
+                Attempted   = $adAttempted
+                Connected   = $adConnected
+            }
             $anySelected  = @($runCfg | Where-Object { $_.Attempted }).Count -gt 0
             $anyConnected = @($runCfg | Where-Object { $_.Connected }).Count -gt 0
             $cfgSeverity = if (-not $anySelected) { 'P1' } elseif (-not $anyConnected) { 'P1' } else { 'Info' }
