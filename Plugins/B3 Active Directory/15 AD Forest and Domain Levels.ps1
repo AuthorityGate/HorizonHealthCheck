@@ -17,8 +17,14 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
+# Build common -Server / -Credential splat from the AD tab's first row.
+$_adArgs = @{}
+$_adServer = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } elseif ($Global:ADForestFqdn) { $Global:ADForestFqdn } else { $null }
+if ($_adServer) { $_adArgs.Server = $_adServer }
+if (Test-Path Variable:Global:ADCredential) { $_adArgs.Credential = $Global:ADCredential }
+
 try {
-    $forest = Get-ADForest
+    $forest = Get-ADForest @_adArgs
     $rows = New-Object System.Collections.ArrayList
     [void]$rows.Add([pscustomobject]@{
         Scope        = 'Forest'
@@ -27,11 +33,12 @@ try {
         SchemaMaster = $forest.SchemaMaster
         DomainNamingMaster = $forest.DomainNamingMaster
         UPNSuffixes  = ($forest.UPNSuffixes -join ', ')
-        Trusts       = (@(Get-ADTrust -Filter * -ErrorAction SilentlyContinue).Count)
+        Trusts       = (@(Get-ADTrust -Filter * @_adArgs -ErrorAction SilentlyContinue).Count)
     })
     foreach ($d in $forest.Domains) {
         try {
-            $dom = Get-ADDomain -Identity $d -ErrorAction Stop
+            # Use the per-domain FQDN as -Server so trusts/multi-domain forests resolve
+            $dom = Get-ADDomain -Identity $d -Server $d -ErrorAction Stop
             [void]$rows.Add([pscustomobject]@{
                 Scope        = 'Domain'
                 Name         = $dom.DNSRoot
@@ -43,9 +50,9 @@ try {
             })
         } catch { }
     }
-    # Schema version
+    # Schema version - use the same -Server context to avoid the runner's empty default-domain
     try {
-        $schema = Get-ADObject (Get-ADRootDSE).schemaNamingContext -Properties objectVersion
+        $schema = Get-ADObject (Get-ADRootDSE @_adArgs).schemaNamingContext -Properties objectVersion @_adArgs
         [void]$rows.Add([pscustomobject]@{
             Scope        = 'Schema'
             Name         = "objectVersion=$($schema.objectVersion)"

@@ -17,9 +17,15 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
+# Build common -Server / -Credential splat from the AD tab's first row.
+$_adArgs = @{}
+$_adServer = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } elseif ($Global:ADForestFqdn) { $Global:ADForestFqdn } else { $null }
+if ($_adServer) { $_adArgs.Server = $_adServer }
+if (Test-Path Variable:Global:ADCredential) { $_adArgs.Credential = $Global:ADCredential }
+
 $rows = New-Object System.Collections.ArrayList
 try {
-    $pol = Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop
+    $pol = Get-ADDefaultDomainPasswordPolicy @_adArgs -ErrorAction Stop
     [void]$rows.Add([pscustomobject]@{
         PolicyName       = 'Default Domain Password Policy'
         Precedence       = '(default)'
@@ -36,7 +42,7 @@ try {
 } catch { }
 
 try {
-    $psos = @(Get-ADFineGrainedPasswordPolicy -Filter * -ErrorAction Stop)
+    $psos = @(Get-ADFineGrainedPasswordPolicy -Filter * @_adArgs -ErrorAction Stop)
     foreach ($pso in $psos) {
         [void]$rows.Add([pscustomobject]@{
             PolicyName       = $pso.Name

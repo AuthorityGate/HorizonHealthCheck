@@ -19,11 +19,22 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
-try { $domains = @((Get-ADForest).Domains) } catch { $domains = @($env:USERDNSDOMAIN) }
+# Build common -Credential splat from the AD tab's first row. Per-domain
+# loop below sets -Server explicitly to each domain FQDN.
+$_adCredArgs = @{}
+if (Test-Path Variable:Global:ADCredential) { $_adCredArgs.Credential = $Global:ADCredential }
+
+# Forest discovery: prefer the operator-supplied DC; fall back to runner
+# domain context which usually fails on a non-domain-joined runner.
+$_forestServerArgs = @{}
+$_forestSeed = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } elseif ($Global:ADForestFqdn) { $Global:ADForestFqdn } else { $null }
+if ($_forestSeed) { $_forestServerArgs.Server = $_forestSeed }
+
+try { $domains = @((Get-ADForest @_forestServerArgs @_adCredArgs).Domains) } catch { $domains = @($env:USERDNSDOMAIN) }
 foreach ($d in $domains) {
     if (-not $d) { continue }
     try {
-        $accts = @(Get-ADUser -Server $d -Filter "samAccountName -like 'krbtgt*'" -Properties PasswordLastSet -ErrorAction Stop)
+        $accts = @(Get-ADUser -Server $d -Filter "samAccountName -like 'krbtgt*'" -Properties PasswordLastSet @_adCredArgs -ErrorAction Stop)
         foreach ($a in $accts) {
             $age = if ($a.PasswordLastSet) { [int]((Get-Date) - $a.PasswordLastSet).TotalDays } else { $null }
             [pscustomobject]@{

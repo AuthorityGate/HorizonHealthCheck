@@ -17,18 +17,24 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
+# Build common -Server / -Credential splat from the AD tab's first row.
+$_adArgs = @{}
+$_adServer = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } elseif ($Global:ADForestFqdn) { $Global:ADForestFqdn } else { $null }
+if ($_adServer) { $_adArgs.Server = $_adServer }
+if (Test-Path Variable:Global:ADCredential) { $_adArgs.Credential = $Global:ADCredential }
+
 $privGroups = @('Domain Admins','Enterprise Admins','Schema Admins','Account Operators',
     'Server Operators','Backup Operators','Print Operators','DnsAdmins',
     'Group Policy Creator Owners','Cert Publishers','Protected Users')
 
 foreach ($g in $privGroups) {
     try {
-        $grp = Get-ADGroup -Filter "Name -eq '$g'" -ErrorAction SilentlyContinue
+        $grp = Get-ADGroup -Filter "Name -eq '$g'" @_adArgs -ErrorAction SilentlyContinue
         if (-not $grp) { continue }
-        $members = @(Get-ADGroupMember -Identity $grp -Recursive -ErrorAction SilentlyContinue)
+        $members = @(Get-ADGroupMember -Identity $grp -Recursive @_adArgs -ErrorAction SilentlyContinue)
         foreach ($m in $members) {
             $extra = $null
-            try { $extra = Get-ADUser $m.SamAccountName -Properties LastLogonDate, PasswordLastSet, Enabled, AccountExpirationDate -ErrorAction SilentlyContinue } catch { }
+            try { $extra = Get-ADUser $m.SamAccountName -Properties LastLogonDate, PasswordLastSet, Enabled, AccountExpirationDate @_adArgs -ErrorAction SilentlyContinue } catch { }
             [pscustomobject]@{
                 Group           = $g
                 Member          = $m.SamAccountName

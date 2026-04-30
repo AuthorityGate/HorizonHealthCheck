@@ -19,10 +19,16 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
+# Build common -Server / -Credential splat from the AD tab's first row.
+$_adArgs = @{}
+$_adServer = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } elseif ($Global:ADForestFqdn) { $Global:ADForestFqdn } else { $null }
+if ($_adServer) { $_adArgs.Server = $_adServer }
+if (Test-Path Variable:Global:ADCredential) { $_adArgs.Credential = $Global:ADCredential }
+
 $cutoff = (Get-Date).AddDays(-$StaleDays)
 try {
     $stale = @(Get-ADComputer -Filter { LastLogonTimeStamp -lt $cutoff } `
-                              -Properties LastLogonTimeStamp, PasswordLastSet, OperatingSystem, Enabled -ErrorAction Stop |
+                              -Properties LastLogonTimeStamp, PasswordLastSet, OperatingSystem, Enabled @_adArgs -ErrorAction Stop |
         Sort-Object LastLogonTimeStamp |
         Select-Object -First $MaxRendered)
 } catch {
