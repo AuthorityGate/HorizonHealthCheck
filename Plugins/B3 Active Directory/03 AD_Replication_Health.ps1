@@ -23,14 +23,18 @@ if (-not $adAvailable) {
     return
 }
 
-# Get-ADReplicationPartnerMetadata uses -Target instead of -Server. Pass
-# only -Credential via the splat (Server isn't a valid parameter on this
-# cmdlet and would error out 'parameter cannot be found').
+# Get-ADReplicationPartnerMetadata uses -Target instead of -Server. On a
+# non-domain-joined runner, passing the forest FQDN as -Target fails with
+# 'Unable to find a default server' because the cmdlet can't auto-discover
+# a DC. Use the operator-supplied DC FQDN as -Target with -Scope Forest
+# instead - returns the same forest-wide replication metadata from that
+# DC's perspective.
+$repTarget = if ($Global:ADServerFqdn) { $Global:ADServerFqdn } else { $Global:ADForestFqdn }
 $repArgs = @{}
 if (Test-Path Variable:Global:ADCredential) { $repArgs.Credential = $Global:ADCredential }
 
 try {
-    $partners = Get-ADReplicationPartnerMetadata -Target $Global:ADForestFqdn -Scope Forest @repArgs -ErrorAction Stop
+    $partners = Get-ADReplicationPartnerMetadata -Target $repTarget -Scope Forest @repArgs -ErrorAction Stop
     foreach ($p in $partners) {
         $hasFailure = ($p.LastReplicationResult -ne 0) -or ($p.ConsecutiveReplicationFailures -gt 0)
         if ($hasFailure) {

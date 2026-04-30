@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.67'
+$Script:HealthCheckVersion = '0.93.68'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -1733,14 +1733,28 @@ $cAD.BtnTest.Add_Click({
 })
 
 # RSAT presence + install button (moved here from the Specialized Scope
-# dialog - belongs with the AD configuration that needs it).
-$rsatPresentAD = [bool](Get-Module -ListAvailable ActiveDirectory)
+# dialog - belongs with the AD configuration that needs it). Checks ALL
+# four modules the B3/B4 plugin set needs (AD + GroupPolicy + DnsServer +
+# DhcpServer) so the operator can see which are missing instead of seeing
+# an 'all good' for AD while DNS/DHCP/GPO plugins silently skip.
+$_rsatNeeded = @(
+    @{ Module='ActiveDirectory'; Label='AD' }
+    @{ Module='GroupPolicy';     Label='GroupPolicy' }
+    @{ Module='DnsServer';       Label='DNS' }
+    @{ Module='DhcpServer';      Label='DHCP' }
+)
+$_rsatPresent = @($_rsatNeeded | Where-Object { Get-Module -ListAvailable $_.Module -ErrorAction SilentlyContinue })
+$_rsatMissing = @($_rsatNeeded | Where-Object { -not (Get-Module -ListAvailable $_.Module -ErrorAction SilentlyContinue) })
+$rsatPresentAD = ($_rsatMissing.Count -eq 0)
 $cAD.LblRsat = New-Object System.Windows.Forms.Label
 if ($rsatPresentAD) {
-    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: INSTALLED on this runner.'
+    $cAD.LblRsat.Text = "RSAT modules: ALL INSTALLED ($($_rsatPresent.Label -join ', '))"
     $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(39, 174, 96)
+} elseif ($_rsatPresent.Count -gt 0) {
+    $cAD.LblRsat.Text = "RSAT: $($_rsatPresent.Count)/$($_rsatNeeded.Count) installed. Missing: $($_rsatMissing.Label -join ', ')"
+    $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(192, 130, 0)
 } else {
-    $cAD.LblRsat.Text = 'RSAT ActiveDirectory module: NOT installed (AD plugins will skip until installed).'
+    $cAD.LblRsat.Text = "RSAT modules NOT installed: $($_rsatMissing.Label -join ', '). AD/DNS/DHCP/GPO plugins will skip."
     $cAD.LblRsat.ForeColor = [System.Drawing.Color]::FromArgb(192, 57, 43)
 }
 $cAD.LblRsat.Location = New-Object System.Drawing.Point(20, 290); $cAD.LblRsat.Size = New-Object System.Drawing.Size(440, 18)
