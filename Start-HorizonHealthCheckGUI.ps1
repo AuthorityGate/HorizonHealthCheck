@@ -67,7 +67,7 @@ $($err | Out-String)
 # include it. Auto-update is best-effort: any network/file error is logged
 # and ignored - the user keeps running the local copy. We use a release-asset
 # URL (GitHub Releases) so anonymous downloads don't hit the API rate limit.
-$Script:HealthCheckVersion = '0.93.64'
+$Script:HealthCheckVersion = '0.93.65'
 $versionFile = Join-Path $root 'VERSION'
 if (Test-Path $versionFile) {
     try { $v = (Get-Content $versionFile -Raw -ErrorAction Stop).Trim(); if ($v) { $Script:HealthCheckVersion = $v } } catch { }
@@ -3878,12 +3878,23 @@ $btnRun.Add_Click({
     $state.UseNSX     = $cNSX.Use.Checked; $state.NSXServer = $cNSX.Server.Text; $state.NSXUser = $cNSX.User.Text; $state.NSXSkipCert = $cNSX.SkipCert.Checked
     if ($cAD) {
         $state.UseAD = [bool]$cAD.Use.Checked
+        # Read BOTH colDC (required) and colForest (optional). Earlier builds
+        # only saved Forest, so $Global:ADServerFqdn never reached the
+        # runspace and every AD plugin fell back to default-domain-discovery
+        # ('Unable to find a default server with Active Directory Web
+        # Services running'). Gate on DC, since the DC FQDN is what plugins
+        # actually need for the -Server parameter.
         $rows = @()
         foreach ($r in $cAD.Grid.Rows) {
-            $f = [string]$r.Cells['colForest'].Value
-            if (-not $f -or -not $f.Trim()) { continue }
+            $dc = [string]$r.Cells['colDC'].Value
+            if (-not $dc -or -not $dc.Trim()) { continue }
+            $f  = [string]$r.Cells['colForest'].Value
             $cp = [string]$r.Cells['colCred'].Value
-            $rows += @{ Forest = $f.Trim(); CredProfile = $cp }
+            $rows += @{
+                Server      = $dc.Trim()
+                Forest      = if ($f) { $f.Trim() } else { '' }
+                CredProfile = $cp
+            }
         }
         $state.ADForests = $rows
     }
@@ -4108,18 +4119,19 @@ $btnRun.Add_Click({
     $proxy.SetVariable('specADCredential',      $Script:SpecADCredential)
     # AD tab list. Each row is hashtable @{ Server; Forest; CredProfile }.
     # The runspace resolves CredProfile to a [pscredential] at run time.
+    # NOTE on shape: $state.ADForests is hashtables when the row was just
+    # saved by the GUI in-memory, OR PSCustomObjects when reloaded from
+    # state.json (ConvertFrom-Json deserializes to PSCustomObject). Both
+    # support direct dot-access ($r.Server / $r.Forest / $r.CredProfile),
+    # so we use that uniformly. Empty/missing properties cast to ''.
     $adRows = @()
     if ($state.UseAD) {
         foreach ($r in @($state.ADForests)) {
             if (-not $r) { continue }
             $sv = ''; $fr = ''; $cp = ''
-            if ($r.PSObject) {
-                if ($r.PSObject.Properties['Server'])      { $sv = [string]$r.Server }
-                if ($r.PSObject.Properties['Forest'])      { $fr = [string]$r.Forest }
-                if ($r.PSObject.Properties['CredProfile']) { $cp = [string]$r.CredProfile }
-            } elseif ($r -is [hashtable]) {
-                $sv = [string]$r.Server; $fr = [string]$r.Forest; $cp = [string]$r.CredProfile
-            }
+            try { $sv = [string]$r.Server      } catch { }
+            try { $fr = [string]$r.Forest      } catch { }
+            try { $cp = [string]$r.CredProfile } catch { }
             if ($sv) { $adRows += @{ Server = $sv; Forest = $fr; CredProfile = $cp } }
         }
     }
